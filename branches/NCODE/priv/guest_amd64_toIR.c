@@ -474,17 +474,17 @@ static void unimplemented ( const HChar* str )
 
 static ULong extend_s_8to64 ( UChar x )
 {
-   return (ULong)((((Long)x) << 56) >> 56);
+   return (ULong)((Long)(((ULong)x) << 56) >> 56);
 }
 
 static ULong extend_s_16to64 ( UShort x )
 {
-   return (ULong)((((Long)x) << 48) >> 48);
+   return (ULong)((Long)(((ULong)x) << 48) >> 48);
 }
 
 static ULong extend_s_32to64 ( UInt x )
 {
-   return (ULong)((((Long)x) << 32) >> 32);
+   return (ULong)((Long)(((ULong)x) << 32) >> 32);
 }
 
 /* Figure out whether the mod and rm parts of a modRM byte refer to a
@@ -27235,10 +27235,11 @@ static Long dis_FMA ( const VexAbiInfo* vbi, Prefix pfx, Long delta, UChar opc )
 }
 
 
-/* Masked load.  */
-static ULong dis_VMASKMOV_load ( Bool *uses_vvvv, const VexAbiInfo* vbi,
-                                 Prefix pfx, Long delta,
-                                 const HChar* opname, Bool isYMM, IRType ty )
+/* Masked load or masked store. */
+static ULong dis_VMASKMOV ( Bool *uses_vvvv, const VexAbiInfo* vbi,
+                            Prefix pfx, Long delta,
+                            const HChar* opname, Bool isYMM, IRType ty,
+                            Bool isLoad )
 {
    HChar   dis_buf[50];
    Int     alen, i;
@@ -27246,50 +27247,58 @@ static ULong dis_VMASKMOV_load ( Bool *uses_vvvv, const VexAbiInfo* vbi,
    UChar   modrm = getUChar(delta);
    UInt    rG    = gregOfRexRM(pfx,modrm);
    UInt    rV    = getVexNvvvv(pfx);
-   IRTemp  res[8], cond;
+
    addr = disAMode ( &alen, vbi, pfx, delta, dis_buf, 0 );
-   if (isYMM) {
-      DIP("%s %s,%s,%s\n", opname, dis_buf, nameYMMReg(rV), nameYMMReg(rG) );
-   } else {
-      DIP("%s %s,%s,%s\n", opname, dis_buf, nameXMMReg(rV), nameXMMReg(rG) );
-   }
    delta += alen;
 
-   for (i = 0; i < 2 * (isYMM ? 2 : 1) * (ty == Ity_I32 ? 2 : 1); i++) {
-      res[i] = newTemp(ty);
-      cond = newTemp(Ity_I1);
-      assign( cond, 
-              binop(ty == Ity_I32 ? Iop_CmpLT32S : Iop_CmpLT64S,
-                    ty == Ity_I32 ? getYMMRegLane32( rV, i )
-                                  : getYMMRegLane64( rV, i ),
-                    mkU(ty, 0) ));
-      assign( res[i],
-              IRExpr_ITE(
-                 mkexpr(cond),
-                 loadLE(ty, IRExpr_ITE(
-                               mkexpr(cond),
-                               binop(Iop_Add64, mkexpr(addr),
-                                     mkU64(i*(ty == Ity_I32 ? 4 : 8))),
-                               getIReg64(R_RSP)
-                            )
-                       ),
-                 mkU(ty, 0)
-              )
-            );
+   /**/ if (isLoad && isYMM) {
+      DIP("%s %s,%s,%s\n", opname, dis_buf, nameYMMReg(rV), nameYMMReg(rG) );
    }
-   switch (ty) {
-      case Ity_I32:
-         for (i = 0; i < 8; i++)
-            putYMMRegLane32( rG, i, (i < 4 || isYMM)
-                                    ? mkexpr(res[i]) : mkU32(0) );
-         break;
-      case Ity_I64:
-         for (i = 0; i < 4; i++)
-            putYMMRegLane64( rG, i, (i < 2 || isYMM)
-                                    ? mkexpr(res[i]) : mkU64(0) );
-         break;
-      default: vassert(0);
+   else if (isLoad && !isYMM) {
+      DIP("%s %s,%s,%s\n", opname, dis_buf, nameXMMReg(rV), nameXMMReg(rG) );
    }
+
+   else if (!isLoad && isYMM) {
+      DIP("%s %s,%s,%s\n", opname, nameYMMReg(rG), nameYMMReg(rV), dis_buf );
+   }
+   else {
+      vassert(!isLoad && !isYMM);
+      DIP("%s %s,%s,%s\n", opname, nameXMMReg(rG), nameXMMReg(rV), dis_buf );
+   }
+
+   vassert(ty == Ity_I32 || ty == Ity_I64);
+   Bool laneIs32 = ty == Ity_I32;
+
+   Int nLanes = (isYMM ? 2 : 1) * (laneIs32 ? 4 : 2);
+
+   for (i = 0; i < nLanes; i++) {
+      IRExpr* shAmt = laneIs32 ? mkU8(31)    : mkU8(63);
+      IRExpr* one   = laneIs32 ? mkU32(1)    : mkU64(1);
+      IROp    opSHR = laneIs32 ? Iop_Shr32   : Iop_Shr64;
+      IROp    opEQ  = laneIs32 ? Iop_CmpEQ32 : Iop_CmpEQ64;
+      IRExpr* lane  = (laneIs32 ? getYMMRegLane32 : getYMMRegLane64)( rV, i );
+
+      IRTemp  cond = newTemp(Ity_I1);
+      assign(cond, binop(opEQ, binop(opSHR, lane, shAmt), one));
+
+      IRTemp  data = newTemp(ty);
+      IRExpr* ea   = binop(Iop_Add64, mkexpr(addr),
+                                      mkU64(i * (laneIs32 ? 4 : 8)));
+      if (isLoad) {
+         stmt(
+            IRStmt_LoadG(
+               Iend_LE, laneIs32 ? ILGop_Ident32 : ILGop_Ident64,
+               data, ea, laneIs32 ? mkU32(0) : mkU64(0), mkexpr(cond)
+         ));
+         (laneIs32 ? putYMMRegLane32 : putYMMRegLane64)( rG, i, mkexpr(data) );
+      } else {
+         assign(data, (laneIs32 ? getYMMRegLane32 : getYMMRegLane64)( rG, i ));
+         stmt( IRStmt_StoreG(Iend_LE, ea, mkexpr(data), mkexpr(cond)) );
+      }
+   }
+
+   if (isLoad && !isYMM)
+      putYMMRegLane128( rG, 1, mkV128(0) );
 
    *uses_vvvv = True;
    return delta;
@@ -28200,35 +28209,77 @@ Long dis_ESC_0F38__VEX (
       break;
 
    case 0x2C:
-      /* VMASKMOVPS m128, xmm2, xmm1 = VEX.NDS.128.66.0F38.WIG 2C /r */
+      /* VMASKMOVPS m128, xmm2, xmm1 = VEX.NDS.128.66.0F38.W0 2C /r */
       if (have66noF2noF3(pfx) && 0==getVexL(pfx)/*128*/
+          && 0==getRexW(pfx)/*W0*/
           && !epartIsReg(getUChar(delta))) {
-         delta = dis_VMASKMOV_load( uses_vvvv, vbi, pfx, delta, "vmaskmovps",
-                                    /*!isYMM*/False, Ity_I32 );
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vmaskmovps",
+                               /*!isYMM*/False, Ity_I32, /*isLoad*/True );
          goto decode_success;
       }
-      /* VMASKMOVPS m256, ymm2, ymm1 = VEX.NDS.256.66.0F38.WIG 2C /r */
+      /* VMASKMOVPS m256, ymm2, ymm1 = VEX.NDS.256.66.0F38.W0 2C /r */
       if (have66noF2noF3(pfx) && 1==getVexL(pfx)/*256*/
+          && 0==getRexW(pfx)/*W0*/
           && !epartIsReg(getUChar(delta))) {
-         delta = dis_VMASKMOV_load( uses_vvvv, vbi, pfx, delta, "vmaskmovps",
-                                    /*isYMM*/True, Ity_I32 );
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vmaskmovps",
+                               /*isYMM*/True, Ity_I32, /*isLoad*/True );
          goto decode_success;
       }
       break;
 
    case 0x2D:
-      /* VMASKMOVPD m128, xmm2, xmm1 = VEX.NDS.128.66.0F38.WIG 2D /r */
+      /* VMASKMOVPD m128, xmm2, xmm1 = VEX.NDS.128.66.0F38.W0 2D /r */
       if (have66noF2noF3(pfx) && 0==getVexL(pfx)/*128*/
+          && 0==getRexW(pfx)/*W0*/
           && !epartIsReg(getUChar(delta))) {
-         delta = dis_VMASKMOV_load( uses_vvvv, vbi, pfx, delta, "vmaskmovpd",
-                                    /*!isYMM*/False, Ity_I64 );
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vmaskmovpd",
+                               /*!isYMM*/False, Ity_I64, /*isLoad*/True );
          goto decode_success;
       }
-      /* VMASKMOVPD m256, ymm2, ymm1 = VEX.NDS.256.66.0F38.WIG 2D /r */
+      /* VMASKMOVPD m256, ymm2, ymm1 = VEX.NDS.256.66.0F38.W0 2D /r */
       if (have66noF2noF3(pfx) && 1==getVexL(pfx)/*256*/
+          && 0==getRexW(pfx)/*W0*/
           && !epartIsReg(getUChar(delta))) {
-         delta = dis_VMASKMOV_load( uses_vvvv, vbi, pfx, delta, "vmaskmovpd",
-                                    /*isYMM*/True, Ity_I64 );
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vmaskmovpd",
+                               /*isYMM*/True, Ity_I64, /*isLoad*/True );
+         goto decode_success;
+      }
+      break;
+
+   case 0x2E:
+      /* VMASKMOVPS xmm1, xmm2, m128 = VEX.NDS.128.66.0F38.W0 2E /r */
+      if (have66noF2noF3(pfx) && 0==getVexL(pfx)/*128*/
+          && 0==getRexW(pfx)/*W0*/
+          && !epartIsReg(getUChar(delta))) {
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vmaskmovps",
+                               /*!isYMM*/False, Ity_I32, /*!isLoad*/False );
+         goto decode_success;
+      }
+      /* VMASKMOVPS ymm1, ymm2, m256 = VEX.NDS.256.66.0F38.W0 2E /r */
+      if (have66noF2noF3(pfx) && 1==getVexL(pfx)/*256*/
+          && 0==getRexW(pfx)/*W0*/
+          && !epartIsReg(getUChar(delta))) {
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vmaskmovps",
+                               /*isYMM*/True, Ity_I32, /*!isLoad*/False );
+         goto decode_success;
+      }
+      break;
+
+   case 0x2F:
+      /* VMASKMOVPD xmm1, xmm2, m128 = VEX.NDS.128.66.0F38.W0 2F /r */
+      if (have66noF2noF3(pfx) && 0==getVexL(pfx)/*128*/
+          && 0==getRexW(pfx)/*W0*/
+          && !epartIsReg(getUChar(delta))) {
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vmaskmovpd",
+                               /*!isYMM*/False, Ity_I64, /*!isLoad*/False );
+         goto decode_success;
+      }
+      /* VMASKMOVPD ymm1, ymm2, m256 = VEX.NDS.256.66.0F38.W0 2F /r */
+      if (have66noF2noF3(pfx) && 1==getVexL(pfx)/*256*/
+          && 0==getRexW(pfx)/*W0*/
+          && !epartIsReg(getUChar(delta))) {
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vmaskmovpd",
+                               /*isYMM*/True, Ity_I64, /*!isLoad*/False );
          goto decode_success;
       }
       break;
@@ -28789,29 +28840,60 @@ Long dis_ESC_0F38__VEX (
       /* VPMASKMOVD m128, xmm2, xmm1 = VEX.NDS.128.66.0F38.W0 8C /r */
       if (have66noF2noF3(pfx) && 0==getVexL(pfx)/*128*/
           && 0==getRexW(pfx)/*W0*/ && !epartIsReg(getUChar(delta))) {
-         delta = dis_VMASKMOV_load( uses_vvvv, vbi, pfx, delta, "vpmaskmovd",
-                                    /*!isYMM*/False, Ity_I32 );
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vpmaskmovd",
+                               /*!isYMM*/False, Ity_I32, /*isLoad*/True );
          goto decode_success;
       }
       /* VPMASKMOVD m256, ymm2, ymm1 = VEX.NDS.256.66.0F38.W0 8C /r */
       if (have66noF2noF3(pfx) && 1==getVexL(pfx)/*256*/
           && 0==getRexW(pfx)/*W0*/ && !epartIsReg(getUChar(delta))) {
-         delta = dis_VMASKMOV_load( uses_vvvv, vbi, pfx, delta, "vpmaskmovd",
-                                    /*isYMM*/True, Ity_I32 );
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vpmaskmovd",
+                               /*isYMM*/True, Ity_I32, /*isLoad*/True );
          goto decode_success;
       }
       /* VPMASKMOVQ m128, xmm2, xmm1 = VEX.NDS.128.66.0F38.W1 8C /r */
       if (have66noF2noF3(pfx) && 0==getVexL(pfx)/*128*/
           && 1==getRexW(pfx)/*W1*/ && !epartIsReg(getUChar(delta))) {
-         delta = dis_VMASKMOV_load( uses_vvvv, vbi, pfx, delta, "vpmaskmovq",
-                                    /*!isYMM*/False, Ity_I64 );
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vpmaskmovq",
+                               /*!isYMM*/False, Ity_I64, /*isLoad*/True );
          goto decode_success;
       }
       /* VPMASKMOVQ m256, ymm2, ymm1 = VEX.NDS.256.66.0F38.W1 8C /r */
       if (have66noF2noF3(pfx) && 1==getVexL(pfx)/*256*/
           && 1==getRexW(pfx)/*W1*/ && !epartIsReg(getUChar(delta))) {
-         delta = dis_VMASKMOV_load( uses_vvvv, vbi, pfx, delta, "vpmaskmovq",
-                                    /*isYMM*/True, Ity_I64 );
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vpmaskmovq",
+                               /*isYMM*/True, Ity_I64, /*isLoad*/True );
+         goto decode_success;
+      }
+      break;
+
+   case 0x8E:
+      /* VPMASKMOVD xmm1, xmm2, m128 = VEX.NDS.128.66.0F38.W0 8E /r */
+      if (have66noF2noF3(pfx) && 0==getVexL(pfx)/*128*/
+          && 0==getRexW(pfx)/*W0*/ && !epartIsReg(getUChar(delta))) {
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vpmaskmovd",
+                               /*!isYMM*/False, Ity_I32, /*!isLoad*/False );
+         goto decode_success;
+      }
+      /* VPMASKMOVD ymm1, ymm2, m256 = VEX.NDS.256.66.0F38.W0 8E /r */
+      if (have66noF2noF3(pfx) && 1==getVexL(pfx)/*256*/
+          && 0==getRexW(pfx)/*W0*/ && !epartIsReg(getUChar(delta))) {
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vpmaskmovd",
+                               /*isYMM*/True, Ity_I32, /*!isLoad*/False );
+         goto decode_success;
+      }
+      /* VPMASKMOVQ xmm1, xmm2, m128 = VEX.NDS.128.66.0F38.W1 8E /r */
+      if (have66noF2noF3(pfx) && 0==getVexL(pfx)/*128*/
+          && 1==getRexW(pfx)/*W1*/ && !epartIsReg(getUChar(delta))) {
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vpmaskmovq",
+                               /*!isYMM*/False, Ity_I64, /*!isLoad*/False );
+         goto decode_success;
+      }
+      /* VPMASKMOVQ ymm1, ymm2, m256 = VEX.NDS.256.66.0F38.W1 8E /r */
+      if (have66noF2noF3(pfx) && 1==getVexL(pfx)/*256*/
+          && 1==getRexW(pfx)/*W1*/ && !epartIsReg(getUChar(delta))) {
+         delta = dis_VMASKMOV( uses_vvvv, vbi, pfx, delta, "vpmaskmovq",
+                               /*isYMM*/True, Ity_I64, /*!isLoad*/False );
          goto decode_success;
       }
       break;

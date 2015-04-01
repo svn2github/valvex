@@ -46,93 +46,42 @@
    vector regs.
 */
 
+#define ST_IN static inline
+ST_IN HReg hregAMD64_RSI   ( void ) { return mkHReg(False, HRcInt64,   6,  0); }
+ST_IN HReg hregAMD64_RDI   ( void ) { return mkHReg(False, HRcInt64,   7,  1); }
+ST_IN HReg hregAMD64_R8    ( void ) { return mkHReg(False, HRcInt64,   8,  2); }
+ST_IN HReg hregAMD64_R9    ( void ) { return mkHReg(False, HRcInt64,   9,  3); }
+ST_IN HReg hregAMD64_R12   ( void ) { return mkHReg(False, HRcInt64,  12,  4); }
+ST_IN HReg hregAMD64_R13   ( void ) { return mkHReg(False, HRcInt64,  13,  5); }
+ST_IN HReg hregAMD64_R14   ( void ) { return mkHReg(False, HRcInt64,  14,  6); }
+ST_IN HReg hregAMD64_R15   ( void ) { return mkHReg(False, HRcInt64,  15,  7); }
+ST_IN HReg hregAMD64_RBX   ( void ) { return mkHReg(False, HRcInt64,   3,  8); }
+
+ST_IN HReg hregAMD64_XMM3  ( void ) { return mkHReg(False, HRcVec128,  3,  9); }
+ST_IN HReg hregAMD64_XMM4  ( void ) { return mkHReg(False, HRcVec128,  4, 10); }
+ST_IN HReg hregAMD64_XMM5  ( void ) { return mkHReg(False, HRcVec128,  5, 11); }
+ST_IN HReg hregAMD64_XMM6  ( void ) { return mkHReg(False, HRcVec128,  6, 12); }
+ST_IN HReg hregAMD64_XMM7  ( void ) { return mkHReg(False, HRcVec128,  7, 13); }
+ST_IN HReg hregAMD64_XMM8  ( void ) { return mkHReg(False, HRcVec128,  8, 14); }
+ST_IN HReg hregAMD64_XMM9  ( void ) { return mkHReg(False, HRcVec128,  9, 15); }
+ST_IN HReg hregAMD64_XMM10 ( void ) { return mkHReg(False, HRcVec128, 10, 16); }
+ST_IN HReg hregAMD64_XMM11 ( void ) { return mkHReg(False, HRcVec128, 11, 17); }
+ST_IN HReg hregAMD64_XMM12 ( void ) { return mkHReg(False, HRcVec128, 12, 18); }
+
+ST_IN HReg hregAMD64_R10   ( void ) { return mkHReg(False, HRcInt64,  10, 19); }
+
+ST_IN HReg hregAMD64_RAX   ( void ) { return mkHReg(False, HRcInt64,   0, 20); }
+ST_IN HReg hregAMD64_RCX   ( void ) { return mkHReg(False, HRcInt64,   1, 21); }
+ST_IN HReg hregAMD64_RDX   ( void ) { return mkHReg(False, HRcInt64,   2, 22); }
+ST_IN HReg hregAMD64_RSP   ( void ) { return mkHReg(False, HRcInt64,   4, 23); }
+ST_IN HReg hregAMD64_RBP   ( void ) { return mkHReg(False, HRcInt64,   5, 24); }
+ST_IN HReg hregAMD64_R11   ( void ) { return mkHReg(False, HRcInt64,  11, 25); }
+
+ST_IN HReg hregAMD64_XMM0  ( void ) { return mkHReg(False, HRcVec128,  0, 26); }
+ST_IN HReg hregAMD64_XMM1  ( void ) { return mkHReg(False, HRcVec128,  1, 27); }
+#undef ST_IN
+
 extern void ppHRegAMD64 ( HReg );
-
-static inline HReg hregAMD64_RAX ( void ) {
-   return mkHReg( 0, HRcInt64, False);
-}
-static inline HReg hregAMD64_RCX ( void ) {
-   return mkHReg( 1, HRcInt64, False);
-}
-static inline HReg hregAMD64_RDX ( void ) {
-   return mkHReg( 2, HRcInt64, False);
-}
-static inline HReg hregAMD64_RBX ( void ) {
-   return mkHReg( 3, HRcInt64, False);
-}
-static inline HReg hregAMD64_RSP ( void ) {
-   return mkHReg( 4, HRcInt64, False);
-}
-static inline HReg hregAMD64_RBP ( void ) {
-   return mkHReg( 5, HRcInt64, False);
-}
-static inline HReg hregAMD64_RSI ( void ) {
-   return mkHReg( 6, HRcInt64, False);
-}
-static inline HReg hregAMD64_RDI ( void ) {
-   return mkHReg( 7, HRcInt64, False);
-}
-static inline HReg hregAMD64_R8  ( void ) {
-   return mkHReg( 8, HRcInt64, False);
-}
-static inline HReg hregAMD64_R9  ( void ) {
-   return mkHReg( 9, HRcInt64, False);
-}
-static inline HReg hregAMD64_R10 ( void ) {
-   return mkHReg(10, HRcInt64, False);
-}
-static inline HReg hregAMD64_R11 ( void ) {
-   return mkHReg(11, HRcInt64, False);
-}
-static inline HReg hregAMD64_R12 ( void ) {
-   return mkHReg(12, HRcInt64, False);
-}
-static inline HReg hregAMD64_R13 ( void ) {
-   return mkHReg(13, HRcInt64, False);
-}
-static inline HReg hregAMD64_R14 ( void ) {
-   return mkHReg(14, HRcInt64, False);
-}
-static inline HReg hregAMD64_R15 ( void ) {
-   return mkHReg(15, HRcInt64, False);
-}
-
-static inline HReg hregAMD64_XMM0  ( void ) {
-   return mkHReg( 0, HRcVec128, False);
-}
-static inline HReg hregAMD64_XMM1  ( void ) {
-   return mkHReg( 1, HRcVec128, False);
-}
-static inline HReg hregAMD64_XMM3  ( void ) {
-   return mkHReg( 3, HRcVec128, False);
-}
-static inline HReg hregAMD64_XMM4  ( void ) {
-   return mkHReg( 4, HRcVec128, False);
-}
-static inline HReg hregAMD64_XMM5  ( void ) {
-   return mkHReg( 5, HRcVec128, False);
-}
-static inline HReg hregAMD64_XMM6  ( void ) {
-   return mkHReg( 6, HRcVec128, False);
-}
-static inline HReg hregAMD64_XMM7  ( void ) {
-   return mkHReg( 7, HRcVec128, False);
-}
-static inline HReg hregAMD64_XMM8  ( void ) {
-   return mkHReg( 8, HRcVec128, False);
-}
-static inline HReg hregAMD64_XMM9  ( void ) {
-   return mkHReg( 9, HRcVec128, False);
-}
-static inline HReg hregAMD64_XMM10 ( void ) {
-   return mkHReg(10, HRcVec128, False);
-}
-static inline HReg hregAMD64_XMM11 ( void ) {
-   return mkHReg(11, HRcVec128, False);
-}
-static inline HReg hregAMD64_XMM12 ( void ) {
-   return mkHReg(12, HRcVec128, False);
-}
 
 
 /* --------- Condition codes, AMD encoding. --------- */
@@ -421,7 +370,9 @@ typedef
       Ain_XDirect,     /* direct transfer to GA */
       Ain_XIndir,      /* indirect transfer to GA */
       Ain_XAssisted,   /* assisted transfer to GA */
-      Ain_CMov64,      /* conditional move */
+      Ain_CMov64,      /* conditional move, 64-bit reg-reg only */
+      Ain_CLoad,       /* cond. load to int reg, 32 bit ZX or 64 bit only */
+      Ain_CStore,      /* cond. store from int reg, 32 or 64 bit only */
       Ain_MovxLQ,      /* reg-reg move, zx-ing/sx-ing top 32 bits */
       Ain_MovxWQ,      /* reg-reg move, zx-ing/sx-ing top 48 bits */
       Ain_LoadEX,      /* mov{s,z}{b,w,l}q from mem to reg */
@@ -578,16 +529,32 @@ typedef
             be the bogus Acc_ALWAYS. */
          struct {
             AMD64CondCode cond;
-            AMD64RM*      src;
+            HReg          src;
             HReg          dst;
          } CMov64;
+         /* conditional load to int reg, 32 bit ZX or 64 bit only.
+            cond may not be Acc_ALWAYS. */
+         struct {
+            AMD64CondCode cond;
+            UChar         szB; /* 4 or 8 only */
+            AMD64AMode*   addr;
+            HReg          dst;
+         } CLoad;
+         /* cond. store from int reg, 32 or 64 bit only.
+            cond may not be Acc_ALWAYS. */
+         struct {
+            AMD64CondCode cond;
+            UChar         szB; /* 4 or 8 only */
+            HReg          src;
+            AMD64AMode*   addr;
+         } CStore;
          /* reg-reg move, sx-ing/zx-ing top 32 bits */
          struct {
             Bool syned;
             HReg src;
             HReg dst;
          } MovxLQ;
-         /* reg-reg move, sx-ing/zx-ing top 32 bits */
+         /* reg-reg move, sx-ing/zx-ing top 48 bits */
          struct {
             Bool syned;
             HReg src;
@@ -814,7 +781,11 @@ extern AMD64Instr* AMD64Instr_XIndir     ( HReg dstGA, AMD64AMode* amRIP,
                                            AMD64CondCode cond );
 extern AMD64Instr* AMD64Instr_XAssisted  ( HReg dstGA, AMD64AMode* amRIP,
                                            AMD64CondCode cond, IRJumpKind jk );
-extern AMD64Instr* AMD64Instr_CMov64     ( AMD64CondCode, AMD64RM* src, HReg dst );
+extern AMD64Instr* AMD64Instr_CMov64     ( AMD64CondCode, HReg src, HReg dst );
+extern AMD64Instr* AMD64Instr_CLoad      ( AMD64CondCode cond, UChar szB,
+                                           AMD64AMode* addr, HReg dst );
+extern AMD64Instr* AMD64Instr_CStore     ( AMD64CondCode cond, UChar szB,
+                                           HReg src, AMD64AMode* addr );
 extern AMD64Instr* AMD64Instr_MovxLQ     ( Bool syned, HReg src, HReg dst );
 extern AMD64Instr* AMD64Instr_MovxWQ     ( Bool syned, HReg src, HReg dst );
 extern AMD64Instr* AMD64Instr_LoadEX     ( UChar szSmall, Bool syned,
@@ -880,7 +851,8 @@ extern void genSpill_AMD64  ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
 extern void genReload_AMD64 ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                               HReg rreg, Bool spRel, Int offset, Bool );
 
-extern void         getAllocableRegs_AMD64 ( Int*, HReg** );
+extern const RRegUniverse* getRRegUniverse_AMD64 ( void );
+
 extern HInstrArray* iselSB_AMD64           ( const IRSB*, 
                                              VexArch,
                                              const VexArchInfo*,

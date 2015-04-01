@@ -51,9 +51,10 @@
    MByte/sec.  Once the size increases enough to fall out of the cache
    into memory, the rate falls by about a factor of 3. 
 */
+
 #define N_TEMPORARY_BYTES 5000000
 
-static HChar  temporary[N_TEMPORARY_BYTES] __attribute__((aligned(8)));
+static HChar  temporary[N_TEMPORARY_BYTES] __attribute__((aligned(REQ_ALIGN)));
 static HChar* temporary_first = &temporary[0];
 static HChar* temporary_curr  = &temporary[0];
 static HChar* temporary_last  = &temporary[N_TEMPORARY_BYTES-1];
@@ -62,14 +63,14 @@ static ULong  temporary_bytes_allocd_TOT = 0;
 
 #define N_PERMANENT_BYTES 10000
 
-static HChar  permanent[N_PERMANENT_BYTES] __attribute__((aligned(8)));
+static HChar  permanent[N_PERMANENT_BYTES] __attribute__((aligned(REQ_ALIGN)));
 static HChar* permanent_first = &permanent[0];
 static HChar* permanent_curr  = &permanent[0];
 static HChar* permanent_last  = &permanent[N_PERMANENT_BYTES-1];
 
-static HChar* private_LibVEX_alloc_first = &temporary[0];
-       HChar* private_LibVEX_alloc_curr  = &temporary[0];
-       HChar* private_LibVEX_alloc_last  = &temporary[N_TEMPORARY_BYTES-1];
+HChar* private_LibVEX_alloc_first = &temporary[0];
+HChar* private_LibVEX_alloc_curr  = &temporary[0];
+HChar* private_LibVEX_alloc_last  = &temporary[N_TEMPORARY_BYTES-1];
 
 
 static VexAllocMode mode = VexAllocModeTEMP;
@@ -196,18 +197,6 @@ void vexSetAllocModeTEMP_and_clear ( void )
 
 /* Exported to library client. */
 
-/* Allocate in Vex's temporary allocation area.  Be careful with this.
-   You can only call it inside an instrumentation or optimisation
-   callback that you have previously specified in a call to
-   LibVEX_Translate.  The storage allocated will only stay alive until
-   translation of the current basic block is complete.
- */
-
-/* void* LibVEX_Alloc ( SizeT nbytes )
-   is now in libvex.h, so it can be inlined.
-*/
-
-
 void LibVEX_ShowAllocStats ( void )
 {
    vex_printf("vex storage: T total %lld bytes allocated\n",
@@ -216,6 +205,10 @@ void LibVEX_ShowAllocStats ( void )
               (Long)(permanent_curr - permanent_first) );
 }
 
+void *LibVEX_Alloc ( SizeT nbytes )
+{
+   return LibVEX_Alloc_inline(nbytes);
+}
 
 /*---------------------------------------------------------*/
 /*--- Bombing out                                       ---*/

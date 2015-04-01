@@ -44,14 +44,6 @@
 #include "guest_s390_defs.h"    /* S390X_GUEST_OFFSET */
 #include <stdarg.h>
 
-/* KLUDGE: We need to know the hwcaps of the host when generating
-   code. But that info is not passed to emit_S390Instr. Only mode64 is
-   being passed. So, ideally, we want this passed as an argument, too.
-   Until then, we use a global variable. This variable is set as a side
-   effect of LibVEX_Translate. */
-UInt s390_host_hwcaps;
-
-
 /*------------------------------------------------------------*/
 /*--- Forward declarations                                 ---*/
 /*------------------------------------------------------------*/
@@ -65,6 +57,32 @@ static UInt s390_tchain_load64_len(void);
 /*------------------------------------------------------------*/
 /*--- Registers                                            ---*/
 /*------------------------------------------------------------*/
+
+/* A mapping from register number to register index */
+static Int gpr_index[16];  // GPR regno -> register index
+static Int fpr_index[16];  // FPR regno -> register index
+
+HReg
+s390_hreg_gpr(UInt regno)
+{
+   Int ix = gpr_index[regno];
+   vassert(ix >= 0);
+   return mkHReg(/*virtual*/False, HRcInt64, regno, ix);
+}
+
+HReg
+s390_hreg_fpr(UInt regno)
+{
+   Int ix = fpr_index[regno];
+   vassert(ix >= 0);
+   return mkHReg(/*virtual*/False, HRcFlt64, regno, ix);
+}
+
+static __inline__ UInt
+hregNumber(HReg reg)
+{
+   return hregEncoding(reg);
+}
 
 /* Decompile the given register into a static buffer and return it */
 const HChar *
@@ -110,74 +128,11 @@ s390_hreg_as_string(HReg reg)
 }
 
 
-/* Tell the register allocator which registers can be allocated. */
-static void
-s390_hreg_get_allocable(Int *nregs, HReg **arr)
-{
-   UInt i;
-
-   /* Total number of allocable registers (all classes) */
-   *nregs =  16 /* GPRs */
-      -  1 /* r0 */
-      -  1 /* r12 scratch register for translation chaining support */
-      -  1 /* r13 guest state pointer */
-      -  1 /* r14 link register */
-      -  1 /* r15 stack pointer */
-      + 16 /* FPRs */
-      ;
-
-   *arr = LibVEX_Alloc(*nregs * sizeof(HReg));
-
-   i = 0;
-
-   /* GPR0 is not available because it is interpreted as 0, when used
-      as a base or index register. */
-   (*arr)[i++] = mkHReg(1,  HRcInt64, False);
-   (*arr)[i++] = mkHReg(2,  HRcInt64, False);
-   (*arr)[i++] = mkHReg(3,  HRcInt64, False);
-   (*arr)[i++] = mkHReg(4,  HRcInt64, False);
-   (*arr)[i++] = mkHReg(5,  HRcInt64, False);
-   (*arr)[i++] = mkHReg(6,  HRcInt64, False);
-   (*arr)[i++] = mkHReg(7,  HRcInt64, False);
-   (*arr)[i++] = mkHReg(8,  HRcInt64, False);
-   (*arr)[i++] = mkHReg(9,  HRcInt64, False);
-   /* GPR10 and GPR11 are used for instructions that use register pairs.
-      Otherwise, they are available to the allocator */
-   (*arr)[i++] = mkHReg(10, HRcInt64, False);
-   (*arr)[i++] = mkHReg(11, HRcInt64, False);
-   /* GPR12 is not available because it us used as a scratch register
-      in translation chaining. */
-   /* GPR13 is not available because it is used as guest state pointer */
-   /* GPR14 is not available because it is used as link register */
-   /* GPR15 is not available because it is used as stack pointer */
-
-   /* Add the available real (non-virtual) FPRs */
-   (*arr)[i++] = mkHReg(0,  HRcFlt64, False);
-   (*arr)[i++] = mkHReg(1,  HRcFlt64, False);
-   (*arr)[i++] = mkHReg(2,  HRcFlt64, False);
-   (*arr)[i++] = mkHReg(3,  HRcFlt64, False);
-   (*arr)[i++] = mkHReg(4,  HRcFlt64, False);
-   (*arr)[i++] = mkHReg(5,  HRcFlt64, False);
-   (*arr)[i++] = mkHReg(6,  HRcFlt64, False);
-   (*arr)[i++] = mkHReg(7,  HRcFlt64, False);
-   (*arr)[i++] = mkHReg(8,  HRcFlt64, False);
-   (*arr)[i++] = mkHReg(9,  HRcFlt64, False);
-   (*arr)[i++] = mkHReg(10, HRcFlt64, False);
-   (*arr)[i++] = mkHReg(11, HRcFlt64, False);
-   (*arr)[i++] = mkHReg(12, HRcFlt64, False);
-   (*arr)[i++] = mkHReg(13, HRcFlt64, False);
-   (*arr)[i++] = mkHReg(14, HRcFlt64, False);
-   (*arr)[i++] = mkHReg(15, HRcFlt64, False);
-   /* FPR12 - FPR15 are also used as register pairs for 128-bit
-      floating point operations */
-}
-
-
 /* Return the real register that holds the guest state pointer */
 HReg
 s390_hreg_guest_state_pointer(void)
 {
-   return mkHReg(S390_REGNO_GUEST_STATE_POINTER, HRcInt64, False);
+   return s390_hreg_gpr(S390_REGNO_GUEST_STATE_POINTER);
 }
 
 
@@ -185,7 +140,8 @@ s390_hreg_guest_state_pointer(void)
 static __inline__ Bool
 fits_signed_20bit(Int value)
 {
-   return ((value << 12) >> 12) == value;
+   UInt uval = value;
+   return ((Int)(uval << 12) >> 12) == value;
 }
 
 
@@ -204,14 +160,14 @@ fits_unsigned_12bit(Int value)
 s390_amode *
 s390_amode_b12(Int d, HReg b)
 {
-   s390_amode *am = LibVEX_Alloc(sizeof(s390_amode));
+   s390_amode *am = LibVEX_Alloc_inline(sizeof(s390_amode));
 
    vassert(fits_unsigned_12bit(d));
 
    am->tag = S390_AMODE_B12;
    am->d = d;
    am->b = b;
-   am->x = mkHReg(0, HRcInt64, False);  /* hregNumber(am->x) == 0 */
+   am->x = s390_hreg_gpr(0);  /* hregNumber(am->x) == 0 */
 
    return am;
 }
@@ -221,14 +177,14 @@ s390_amode_b12(Int d, HReg b)
 s390_amode *
 s390_amode_b20(Int d, HReg b)
 {
-   s390_amode *am = LibVEX_Alloc(sizeof(s390_amode));
+   s390_amode *am = LibVEX_Alloc_inline(sizeof(s390_amode));
 
    vassert(fits_signed_20bit(d));
 
    am->tag = S390_AMODE_B20;
    am->d = d;
    am->b = b;
-   am->x = mkHReg(0, HRcInt64, False);  /* hregNumber(am->x) == 0 */
+   am->x = s390_hreg_gpr(0);  /* hregNumber(am->x) == 0 */
 
    return am;
 }
@@ -238,7 +194,7 @@ s390_amode_b20(Int d, HReg b)
 s390_amode *
 s390_amode_bx12(Int d, HReg b, HReg x)
 {
-   s390_amode *am = LibVEX_Alloc(sizeof(s390_amode));
+   s390_amode *am = LibVEX_Alloc_inline(sizeof(s390_amode));
 
    vassert(fits_unsigned_12bit(d));
    vassert(hregNumber(b) != 0);
@@ -257,7 +213,7 @@ s390_amode_bx12(Int d, HReg b, HReg x)
 s390_amode *
 s390_amode_bx20(Int d, HReg b, HReg x)
 {
-   s390_amode *am = LibVEX_Alloc(sizeof(s390_amode));
+   s390_amode *am = LibVEX_Alloc_inline(sizeof(s390_amode));
 
    vassert(fits_signed_20bit(d));
    vassert(hregNumber(b) != 0);
@@ -420,13 +376,65 @@ ppHRegS390(HReg reg)
 /*--- Helpers for register allocation                      ---*/
 /*------------------------------------------------------------*/
 
-/* Called once per translation. */
-void
-getAllocableRegs_S390(Int *nregs, HReg **arr, Bool mode64)
+/* Initialise and return the "register universe", i.e. a list of
+   all hardware registers. Called once. */
+const RRegUniverse *
+getRRegUniverse_S390(void)
 {
-   s390_hreg_get_allocable(nregs, arr);
-}
+   static RRegUniverse all_regs;
+   static Bool initialised = False;
+   RRegUniverse *ru = &all_regs;
+   
+   if (LIKELY(initialised))
+      return ru;
 
+   RRegUniverse__init(ru);
+
+   /* Assign invalid values to the gpr/fpr_index */
+   for (UInt i = 0; i < sizeof gpr_index / sizeof gpr_index[0]; ++i)
+      gpr_index[i] = -1;
+   for (UInt i = 0; i < sizeof fpr_index / sizeof fpr_index[0]; ++i)
+      fpr_index[i] = -1;
+
+   /* Add the registers that are available to the register allocator.
+      GPRs:  registers 1..11 are available
+      FPRs:  registers 0..15 are available
+             FPR12 - FPR15 are also used as register pairs for 128-bit
+             floating point operations
+   */
+   UInt regno;
+   for (regno = 1; regno <= 11; ++regno) {
+      gpr_index[regno] = ru->size;
+      ru->regs[ru->size++] = s390_hreg_gpr(regno);
+   }
+   for (regno = 0; regno <= 15; ++regno) {
+      fpr_index[regno] = ru->size;
+      ru->regs[ru->size++] = s390_hreg_fpr(regno);
+   }
+   ru->allocable = ru->size;
+
+   /* Add the registers that are not available for allocation.
+      r0  -- cannot be used as a base or index register
+      r12 -- scratch register for translation chaining support
+      r13 -- guest state pointer
+      r14 -- link register
+      r15 -- stack pointer
+   */
+   UInt other[] = { 0, 12, 13, 14, 15 };
+   for (UInt i = 0; i < sizeof other / sizeof other[0]; ++i) {
+      gpr_index[other[i]] = ru->size;
+      ru->regs[ru->size++] = s390_hreg_gpr(other[i]);
+   }
+
+   /* Sanity checking */
+   for (UInt i = 0; i < sizeof gpr_index / sizeof gpr_index[0]; ++i)
+      vassert(gpr_index[i] >= 0);
+   for (UInt i = 0; i < sizeof fpr_index / sizeof fpr_index[0]; ++i)
+      vassert(fpr_index[i] >= 0);
+                 
+   initialised = True;
+   return ru;
+}
 
 /* Tell the register allocator how the given instruction uses the registers
    it refers to. */
@@ -648,19 +656,18 @@ s390_insn_get_reg_usage(HRegUsage *u, const s390_insn *insn)
          volatile registers are: r0 - r5. Valgrind's register allocator
          does not know about r0, so we can leave that out */
       for (i = 1; i <= 5; ++i) {
-         addHRegUse(u, HRmWrite, mkHReg(i, HRcInt64, False));
+         addHRegUse(u, HRmWrite, s390_hreg_gpr(i));
       }
 
       /* Ditto for floating point registers. f0 - f7 are volatile */
       for (i = 0; i <= 7; ++i) {
-         addHRegUse(u, HRmWrite, mkHReg(i, HRcFlt64, False));
+         addHRegUse(u, HRmWrite, s390_hreg_fpr(i));
       }
 
       /* The registers that are used for passing arguments will be read.
          Not all of them may, but in general we need to assume that. */
       for (i = 0; i < insn->variant.helper_call.details->num_args; ++i) {
-         addHRegUse(u, HRmRead, mkHReg(s390_gprno_from_arg_index(i),
-                                       HRcInt64, False));
+         addHRegUse(u, HRmRead, s390_hreg_gpr(s390_gprno_from_arg_index(i)));
       }
 
       /* s390_insn_helper_call_emit also reads / writes the link register
@@ -4725,36 +4732,36 @@ s390_emit_LOCG(UChar *p, UChar r1, UChar m3, UChar b2, UShort dl2, UChar dh2)
 static __inline__ Bool
 uint_fits_signed_16bit(UInt val)
 {
-   Int v = val & 0xFFFFu;
+   UInt v = val & 0xFFFFu;
 
    /* sign extend */
-   v = (v << 16) >> 16;
+   v = (Int)(v << 16) >> 16;
 
-   return val == (UInt)v;
+   return val == v;
 }
 
 
 static __inline__ Bool
 ulong_fits_signed_16bit(ULong val)
 {
-   Long v = val & 0xFFFFu;
+   ULong v = val & 0xFFFFu;
 
    /* sign extend */
-   v = (v << 48) >> 48;
+   v = (Long)(v << 48) >> 48;
 
-   return val == (ULong)v;
+   return val == v;
 }
 
 
 static __inline__ Bool
 ulong_fits_signed_32bit(ULong val)
 {
-   Long v = val & 0xFFFFFFFFu;
+   ULong v = val & 0xFFFFFFFFu;
 
    /* sign extend */
-   v = (v << 32) >> 32;
+   v = (Long)(v << 32) >> 32;
 
-   return val == (ULong)v;
+   return val == v;
 }
 
 
@@ -5205,7 +5212,7 @@ s390_emit_LDGRw(UChar *p, UChar r1, UChar r2)
 s390_insn *
 s390_insn_load(UChar size, HReg dst, s390_amode *src)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    insn->tag  = S390_INSN_LOAD;
    insn->size = size;
@@ -5221,7 +5228,7 @@ s390_insn_load(UChar size, HReg dst, s390_amode *src)
 s390_insn *
 s390_insn_store(UChar size, s390_amode *dst, HReg src)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    insn->tag  = S390_INSN_STORE;
    insn->size = size;
@@ -5237,7 +5244,7 @@ s390_insn_store(UChar size, s390_amode *dst, HReg src)
 s390_insn *
 s390_insn_move(UChar size, HReg dst, HReg src)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    insn->tag  = S390_INSN_MOVE;
    insn->size = size;
@@ -5253,7 +5260,7 @@ s390_insn_move(UChar size, HReg dst, HReg src)
 s390_insn *
 s390_insn_memcpy(UChar size, s390_amode *dst, s390_amode *src)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    /* This insn will be mapped to MVC which requires base register
       plus 12-bit displacement */
@@ -5274,7 +5281,7 @@ s390_insn_memcpy(UChar size, s390_amode *dst, s390_amode *src)
 s390_insn *
 s390_insn_cond_move(UChar size, s390_cc_t cond, HReg dst, s390_opnd_RMI src)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    insn->tag  = S390_INSN_COND_MOVE;
    insn->size = size;
@@ -5291,7 +5298,7 @@ s390_insn_cond_move(UChar size, s390_cc_t cond, HReg dst, s390_opnd_RMI src)
 s390_insn *
 s390_insn_load_immediate(UChar size, HReg dst, ULong value)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    insn->tag  = S390_INSN_LOAD_IMMEDIATE;
    insn->size = size;
@@ -5305,7 +5312,7 @@ s390_insn_load_immediate(UChar size, HReg dst, ULong value)
 s390_insn *
 s390_insn_alu(UChar size, s390_alu_t tag, HReg dst, s390_opnd_RMI op2)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    insn->tag  = S390_INSN_ALU;
    insn->size = size;
@@ -5321,7 +5328,7 @@ s390_insn *
 s390_insn_mul(UChar size, HReg dst_hi, HReg dst_lo, s390_opnd_RMI op2,
               Bool signed_multiply)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(! hregIsVirtual(dst_hi));
    vassert(! hregIsVirtual(dst_lo));
@@ -5340,7 +5347,7 @@ s390_insn *
 s390_insn_div(UChar size, HReg op1_hi, HReg op1_lo, s390_opnd_RMI op2,
               Bool signed_divide)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 4 || size == 8);
    vassert(! hregIsVirtual(op1_hi));
@@ -5359,7 +5366,7 @@ s390_insn_div(UChar size, HReg op1_hi, HReg op1_lo, s390_opnd_RMI op2,
 s390_insn *
 s390_insn_divs(UChar size, HReg rem, HReg op1, s390_opnd_RMI op2)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 8);
    vassert(! hregIsVirtual(op1));
@@ -5378,7 +5385,7 @@ s390_insn_divs(UChar size, HReg rem, HReg op1, s390_opnd_RMI op2)
 s390_insn *
 s390_insn_clz(UChar size, HReg num_bits, HReg clobber, s390_opnd_RMI src)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 8);
    vassert(! hregIsVirtual(num_bits));
@@ -5397,7 +5404,7 @@ s390_insn_clz(UChar size, HReg num_bits, HReg clobber, s390_opnd_RMI src)
 s390_insn *
 s390_insn_unop(UChar size, s390_unop_t tag, HReg dst, s390_opnd_RMI opnd)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    insn->tag  = S390_INSN_UNOP;
    insn->size = size;
@@ -5412,7 +5419,7 @@ s390_insn_unop(UChar size, s390_unop_t tag, HReg dst, s390_opnd_RMI opnd)
 s390_insn *
 s390_insn_test(UChar size, s390_opnd_RMI src)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 4 || size == 8);
 
@@ -5427,7 +5434,7 @@ s390_insn_test(UChar size, s390_opnd_RMI src)
 s390_insn *
 s390_insn_cc2bool(HReg dst, s390_cc_t cond)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    insn->tag  = S390_INSN_CC2BOOL;
    insn->size = 0;   /* does not matter */
@@ -5441,7 +5448,7 @@ s390_insn_cc2bool(HReg dst, s390_cc_t cond)
 s390_insn *
 s390_insn_cas(UChar size, HReg op1, s390_amode *op2, HReg op3, HReg old_mem)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 4 || size == 8);
    vassert(hregNumber(op2->x) == 0);
@@ -5463,8 +5470,8 @@ s390_insn_cdas(UChar size, HReg op1_high, HReg op1_low, s390_amode *op2,
                HReg op3_high, HReg op3_low, HReg old_mem_high, HReg old_mem_low,
                HReg scratch)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
-   s390_cdas *cdas = LibVEX_Alloc(sizeof(s390_cdas));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
+   s390_cdas *cdas = LibVEX_Alloc_inline(sizeof(s390_cdas));
 
    vassert(size == 4 || size == 8);
    vassert(hregNumber(op2->x) == 0);
@@ -5492,7 +5499,7 @@ s390_insn *
 s390_insn_compare(UChar size, HReg src1, s390_opnd_RMI src2,
                   Bool signed_comparison)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 4 || size == 8);
 
@@ -5510,8 +5517,8 @@ s390_insn *
 s390_insn_helper_call(s390_cc_t cond, Addr64 target, UInt num_args,
                       const HChar *name, RetLoc rloc)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
-   s390_helper_call *helper_call = LibVEX_Alloc(sizeof(s390_helper_call));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
+   s390_helper_call *helper_call = LibVEX_Alloc_inline(sizeof(s390_helper_call));
 
    insn->tag  = S390_INSN_HELPER_CALL;
    insn->size = 0;  /* does not matter */
@@ -5533,7 +5540,7 @@ s390_insn *
 s390_insn_bfp_triop(UChar size, s390_bfp_triop_t tag, HReg dst, HReg op2,
                     HReg op3)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 4 || size == 8);
 
@@ -5551,7 +5558,7 @@ s390_insn_bfp_triop(UChar size, s390_bfp_triop_t tag, HReg dst, HReg op2,
 s390_insn *
 s390_insn_bfp_binop(UChar size, s390_bfp_binop_t tag, HReg dst, HReg op2)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 4 || size == 8);
 
@@ -5570,7 +5577,7 @@ s390_insn_bfp_binop(UChar size, s390_bfp_binop_t tag, HReg dst, HReg op2)
 s390_insn *
 s390_insn_bfp_unop(UChar size, s390_bfp_unop_t tag, HReg dst, HReg op)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 4 || size == 8);
 
@@ -5589,7 +5596,7 @@ s390_insn_bfp_unop(UChar size, s390_bfp_unop_t tag, HReg dst, HReg op)
 s390_insn *
 s390_insn_bfp_compare(UChar size, HReg dst, HReg op1, HReg op2)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 4 || size == 8);
 
@@ -5609,7 +5616,7 @@ s390_insn *
 s390_insn_bfp_convert(UChar size, s390_bfp_conv_t tag, HReg dst, HReg op,
                       s390_bfp_round_t rounding_mode)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 4 || size == 8);
 
@@ -5645,7 +5652,7 @@ s390_insn *
 s390_insn_bfp128_binop(UChar size, s390_bfp_binop_t tag, HReg dst_hi,
                        HReg dst_lo, HReg op2_hi, HReg op2_lo)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 16);
    vassert(is_valid_fp128_regpair(dst_hi, dst_lo));
@@ -5667,7 +5674,7 @@ s390_insn *
 s390_insn_bfp128_unop(UChar size, s390_bfp_unop_t tag, HReg dst_hi,
                       HReg dst_lo, HReg op_hi, HReg op_lo)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 16);
    vassert(is_valid_fp128_regpair(dst_hi, dst_lo));
@@ -5689,7 +5696,7 @@ s390_insn *
 s390_insn_bfp128_compare(UChar size, HReg dst, HReg op1_hi, HReg op1_lo,
                          HReg op2_hi, HReg op2_lo)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 16);
    vassert(is_valid_fp128_regpair(op1_hi, op1_lo));
@@ -5712,7 +5719,7 @@ s390_insn_bfp128_convert(UChar size, s390_bfp_conv_t tag, HReg dst_hi,
                          HReg dst_lo, HReg op_hi, HReg op_lo,
                          s390_bfp_round_t rounding_mode)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    if (size == 16) {
       /* From smaller size to 16 bytes */
@@ -5763,8 +5770,8 @@ s390_insn *
 s390_insn_dfp_binop(UChar size, s390_dfp_binop_t tag, HReg dst, HReg op2,
                     HReg op3, s390_dfp_round_t rounding_mode)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
-   s390_dfp_binop *dfp_binop = LibVEX_Alloc(sizeof(s390_dfp_binop));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
+   s390_dfp_binop *dfp_binop = LibVEX_Alloc_inline(sizeof(s390_dfp_binop));
 
    vassert(size == 8);
 
@@ -5788,7 +5795,7 @@ s390_insn_dfp_binop(UChar size, s390_dfp_binop_t tag, HReg dst, HReg op2,
 s390_insn *
 s390_insn_dfp_unop(UChar size, s390_dfp_unop_t tag, HReg dst, HReg op)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 8);
 
@@ -5808,7 +5815,7 @@ s390_insn *
 s390_insn_dfp_intop(UChar size, s390_dfp_intop_t tag, HReg dst, HReg op2,
                     HReg op3)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 8);
 
@@ -5829,7 +5836,7 @@ s390_insn *
 s390_insn_dfp_compare(UChar size, s390_dfp_cmp_t tag, HReg dst,
                       HReg op1, HReg op2)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 8);
 
@@ -5850,7 +5857,7 @@ s390_insn *
 s390_insn_dfp_convert(UChar size, s390_dfp_conv_t tag, HReg dst, HReg op,
                       s390_dfp_round_t rounding_mode)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 4 || size == 8);
 
@@ -5871,7 +5878,7 @@ s390_insn *
 s390_insn_dfp_reround(UChar size, HReg dst, HReg op2, HReg op3,
                       s390_dfp_round_t rounding_mode)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 8);
 
@@ -5892,8 +5899,8 @@ s390_insn *
 s390_insn_fp_convert(UChar size, s390_fp_conv_t tag, HReg dst, HReg op,
                      HReg r1, s390_dfp_round_t rounding_mode)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
-   s390_fp_convert *fp_convert = LibVEX_Alloc(sizeof(s390_fp_convert));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
+   s390_fp_convert *fp_convert = LibVEX_Alloc_inline(sizeof(s390_fp_convert));
 
    vassert(size == 4 || size == 8);
 
@@ -5918,8 +5925,8 @@ s390_insn_fp128_convert(UChar size, s390_fp_conv_t tag, HReg dst_hi,
                         HReg dst_lo, HReg op_hi, HReg op_lo, HReg r1,
                         s390_dfp_round_t rounding_mode)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
-   s390_fp_convert *fp_convert = LibVEX_Alloc(sizeof(s390_fp_convert));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
+   s390_fp_convert *fp_convert = LibVEX_Alloc_inline(sizeof(s390_fp_convert));
 
    vassert(size == 16);
 
@@ -5944,8 +5951,8 @@ s390_insn_dfp128_binop(UChar size, s390_dfp_binop_t tag, HReg dst_hi,
                        HReg dst_lo, HReg op2_hi, HReg op2_lo, HReg op3_hi,
                        HReg op3_lo, s390_dfp_round_t rounding_mode)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
-   s390_dfp_binop *dfp_binop = LibVEX_Alloc(sizeof(s390_dfp_binop));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
+   s390_dfp_binop *dfp_binop = LibVEX_Alloc_inline(sizeof(s390_dfp_binop));
 
    vassert(size == 16);
    vassert(is_valid_fp128_regpair(dst_hi, dst_lo));
@@ -5973,7 +5980,7 @@ s390_insn *
 s390_insn_dfp128_unop(UChar size, s390_dfp_unop_t tag, HReg dst,
                       HReg op_hi, HReg op_lo)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    /* destination is an 8 byte integer value */
    vassert(size == 8);
@@ -5995,7 +6002,7 @@ s390_insn *
 s390_insn_dfp128_intop(UChar size, s390_dfp_intop_t tag, HReg dst_hi,
                        HReg dst_lo, HReg op2, HReg op3_hi, HReg op3_lo)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 16);
    vassert(is_valid_fp128_regpair(dst_hi, dst_lo));
@@ -6018,7 +6025,7 @@ s390_insn *
 s390_insn_dfp128_compare(UChar size, s390_dfp_cmp_t tag, HReg dst, HReg op1_hi,
                          HReg op1_lo, HReg op2_hi, HReg op2_lo)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 16);
    vassert(is_valid_fp128_regpair(op1_hi, op1_lo));
@@ -6042,7 +6049,7 @@ s390_insn_dfp128_convert(UChar size, s390_dfp_conv_t tag, HReg dst_hi,
                          HReg dst_lo, HReg op_hi, HReg op_lo,
                          s390_dfp_round_t rounding_mode)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    if (size == 16) {
       /* From smaller size to 16 bytes */
@@ -6094,7 +6101,7 @@ s390_insn_dfp128_reround(UChar size, HReg dst_hi, HReg dst_lo, HReg op2,
                          HReg op3_hi, HReg op3_lo,
                          s390_dfp_round_t rounding_mode)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 16);
    vassert(is_valid_fp128_regpair(dst_hi, dst_lo));
@@ -6116,7 +6123,7 @@ s390_insn_dfp128_reround(UChar size, HReg dst_hi, HReg dst_lo, HReg op2,
 s390_insn *
 s390_insn_mfence(void)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    insn->tag  = S390_INSN_MFENCE;
    insn->size = 0;   /* not needed */
@@ -6128,7 +6135,7 @@ s390_insn_mfence(void)
 s390_insn *
 s390_insn_mimm(UChar size, s390_amode *dst, ULong value)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    /* This insn will be mapped to insns that require base register
       plus 12-bit displacement */
@@ -6146,7 +6153,7 @@ s390_insn_mimm(UChar size, s390_amode *dst, ULong value)
 s390_insn *
 s390_insn_madd(UChar size, s390_amode *dst, UChar delta, ULong value)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(size == 4 || size == 8);
 
@@ -6171,7 +6178,7 @@ s390_insn_set_fpc_bfprm(UChar size, HReg mode)
 {
    vassert(size == 4);
 
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    insn->tag  = S390_INSN_SET_FPC_BFPRM;
    insn->size = size;
@@ -6186,7 +6193,7 @@ s390_insn_set_fpc_dfprm(UChar size, HReg mode)
 {
    vassert(size == 4);
 
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    insn->tag  = S390_INSN_SET_FPC_DFPRM;
    insn->size = size;
@@ -6200,7 +6207,7 @@ s390_insn *
 s390_insn_xdirect(s390_cc_t cond, Addr64 dst, s390_amode *guest_IA,
                   Bool to_fast_entry)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(guest_IA->tag == S390_AMODE_B12);
 
@@ -6219,7 +6226,7 @@ s390_insn_xdirect(s390_cc_t cond, Addr64 dst, s390_amode *guest_IA,
 s390_insn *
 s390_insn_xindir(s390_cc_t cond, HReg dst, s390_amode *guest_IA)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(guest_IA->tag == S390_AMODE_B12);
 
@@ -6238,7 +6245,7 @@ s390_insn *
 s390_insn_xassisted(s390_cc_t cond, HReg dst, s390_amode *guest_IA,
                     IRJumpKind kind)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(guest_IA->tag == S390_AMODE_B12);
 
@@ -6257,7 +6264,7 @@ s390_insn_xassisted(s390_cc_t cond, HReg dst, s390_amode *guest_IA,
 s390_insn *
 s390_insn_evcheck(s390_amode *counter, s390_amode *fail_addr)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    vassert(counter->tag   == S390_AMODE_B12);
    vassert(fail_addr->tag == S390_AMODE_B12);
@@ -6275,7 +6282,7 @@ s390_insn_evcheck(s390_amode *counter, s390_amode *fail_addr)
 s390_insn *
 s390_insn_profinc(void)
 {
-   s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+   s390_insn *insn = LibVEX_Alloc_inline(sizeof(s390_insn));
 
    insn->tag  = S390_INSN_PROFINC;
    insn->size = 0;   /* does not matter */

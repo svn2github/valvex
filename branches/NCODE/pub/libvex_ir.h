@@ -225,6 +225,7 @@ typedef
       Ity_I32, 
       Ity_I64,
       Ity_I128,  /* 128-bit scalar */
+      Ity_F16,   /* 16 bit float */
       Ity_F32,   /* IEEE 754 float */
       Ity_F64,   /* IEEE 754 double */
       Ity_D32,   /* 32-bit Decimal floating point */
@@ -757,6 +758,19 @@ typedef
       /* NB: pretty much the same as Iop_F64toF32, except no change 
          of type. */
 
+      /* --- guest arm64 specifics, not mandated by 754. --- */
+
+      Iop_RecpExpF64,  /* FRECPX d  :: IRRoundingMode(I32) x F64 -> F64 */
+      Iop_RecpExpF32,  /* FRECPX s  :: IRRoundingMode(I32) x F32 -> F32 */
+
+      /* ------------------ 16-bit scalar FP ------------------ */
+
+      Iop_F16toF64,  /*                       F16 -> F64 */
+      Iop_F64toF16,  /* IRRoundingMode(I32) x F64 -> F16 */
+
+      Iop_F16toF32,  /*                       F16 -> F32 */
+      Iop_F32toF16,  /* IRRoundingMode(I32) x F32 -> F16 */
+
       /* ------------------ 32-bit SIMD Integer ------------------ */
 
       /* 32x1 saturating add/sub (ok, well, not really SIMD :) */
@@ -1287,8 +1301,8 @@ typedef
       Iop_Neg32Fx4,
 
       /* Vector Reciprocal Estimate finds an approximate reciprocal of each
-      element in the operand vector, and places the results in the destination
-      vector.  */
+         element in the operand vector, and places the results in the
+         destination vector.  */
       Iop_RecipEst32Fx4,
 
       /* Vector Reciprocal Step computes (2.0 - arg1 * arg2).
@@ -1350,6 +1364,12 @@ typedef
       Iop_Abs64Fx2,
       Iop_Sqrt64Fx2,
       Iop_Neg64Fx2,
+
+      /* see 32Fx4 variants for description */
+      Iop_RecipEst64Fx2,    // unary
+      Iop_RecipStep64Fx2,   // binary
+      Iop_RSqrtEst64Fx2,    // unary
+      Iop_RSqrtStep64Fx2,   // binary
 
       /* --- 64x2 lowest-lane-only scalar FP --- */
 
@@ -2569,6 +2589,7 @@ typedef
 typedef
    enum {
       ILGop_INVALID=0x1D00,
+      ILGop_Ident64,   /* 64 bit, no conversion */
       ILGop_Ident32,   /* 32 bit, no conversion */
       ILGop_16Uto32,   /* 16 bit load, Z-widen to 32 */
       ILGop_16Sto32,   /* 16 bit load, S-widen to 32 */

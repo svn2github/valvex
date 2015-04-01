@@ -149,40 +149,32 @@ static void addInstr ( ISelEnv* env, ARMInstr* instr )
       ppARMInstr(instr);
       vex_printf("\n");
    }
-#if 0
-   if (instr->tag == ARMin_NUnary || instr->tag == ARMin_NBinary
-         || instr->tag == ARMin_NUnaryS || instr->tag == ARMin_NBinaryS
-         || instr->tag == ARMin_NDual || instr->tag == ARMin_NShift) {
-      ppARMInstr(instr);
-      vex_printf("\n");
-   }
-#endif
 }
 
 static HReg newVRegI ( ISelEnv* env )
 {
-   HReg reg = mkHReg(env->vreg_ctr, HRcInt32, True/*virtual reg*/);
+   HReg reg = mkHReg(True/*virtual reg*/, HRcInt32, 0/*enc*/, env->vreg_ctr);
    env->vreg_ctr++;
    return reg;
 }
 
 static HReg newVRegD ( ISelEnv* env )
 {
-   HReg reg = mkHReg(env->vreg_ctr, HRcFlt64, True/*virtual reg*/);
+   HReg reg = mkHReg(True/*virtual reg*/, HRcFlt64, 0/*enc*/, env->vreg_ctr);
    env->vreg_ctr++;
    return reg;
 }
 
 static HReg newVRegF ( ISelEnv* env )
 {
-   HReg reg = mkHReg(env->vreg_ctr, HRcFlt32, True/*virtual reg*/);
+   HReg reg = mkHReg(True/*virtual reg*/, HRcFlt32, 0/*enc*/, env->vreg_ctr);
    env->vreg_ctr++;
    return reg;
 }
 
 static HReg newVRegV ( ISelEnv* env )
 {
-   HReg reg = mkHReg(env->vreg_ctr, HRcVec128, True/*virtual reg*/);
+   HReg reg = mkHReg(True/*virtual reg*/, HRcVec128, 0/*enc*/, env->vreg_ctr);
    env->vreg_ctr++;
    return reg;
 }
@@ -1373,51 +1365,70 @@ static HReg iselIntExpr_R_wrk ( ISelEnv* env, IRExpr* e )
       if (e->Iex.Binop.op == Iop_GetElem8x8
           || e->Iex.Binop.op == Iop_GetElem16x4
           || e->Iex.Binop.op == Iop_GetElem32x2) {
-         HReg res = newVRegI(env);
-         HReg arg = iselNeon64Expr(env, e->Iex.Binop.arg1);
-         UInt index, size;
-         if (e->Iex.Binop.arg2->tag != Iex_Const ||
-             typeOfIRExpr(env->type_env, e->Iex.Binop.arg2) != Ity_I8) {
-            vpanic("ARM target supports GetElem with constant "
-                   "second argument only\n");
+         if (env->hwcaps & VEX_HWCAPS_ARM_NEON) {
+            HReg res = newVRegI(env);
+            HReg arg = iselNeon64Expr(env, e->Iex.Binop.arg1);
+            UInt index, size;
+            if (e->Iex.Binop.arg2->tag != Iex_Const ||
+                typeOfIRExpr(env->type_env, e->Iex.Binop.arg2) != Ity_I8) {
+               vpanic("ARM target supports GetElem with constant "
+                      "second argument only (neon)\n");
+            }
+            index = e->Iex.Binop.arg2->Iex.Const.con->Ico.U8;
+            switch (e->Iex.Binop.op) {
+               case Iop_GetElem8x8: vassert(index < 8); size = 0; break;
+               case Iop_GetElem16x4: vassert(index < 4); size = 1; break;
+               case Iop_GetElem32x2: vassert(index < 2); size = 2; break;
+               default: vassert(0);
+            }
+            addInstr(env, ARMInstr_NUnaryS(ARMneon_GETELEMS,
+                                           mkARMNRS(ARMNRS_Reg, res, 0),
+                                           mkARMNRS(ARMNRS_Scalar, arg, index),
+                                           size, False));
+            return res;
          }
-         index = e->Iex.Binop.arg2->Iex.Const.con->Ico.U8;
-         switch (e->Iex.Binop.op) {
-            case Iop_GetElem8x8: vassert(index < 8); size = 0; break;
-            case Iop_GetElem16x4: vassert(index < 4); size = 1; break;
-            case Iop_GetElem32x2: vassert(index < 2); size = 2; break;
-            default: vassert(0);
+      }
+
+      if (e->Iex.Binop.op == Iop_GetElem32x2
+          && e->Iex.Binop.arg2->tag == Iex_Const
+          && !(env->hwcaps & VEX_HWCAPS_ARM_NEON)) {
+         /* We may have to do GetElem32x2 on a non-NEON capable
+            target. */
+         IRConst* con = e->Iex.Binop.arg2->Iex.Const.con;
+         vassert(con->tag == Ico_U8); /* else IR is ill-typed */
+         UInt index = con->Ico.U8;
+         if (index >= 0 && index <= 1) {
+            HReg rHi, rLo;
+            iselInt64Expr(&rHi, &rLo, env, e->Iex.Binop.arg1);
+            return index == 0 ? rLo : rHi;
          }
-         addInstr(env, ARMInstr_NUnaryS(ARMneon_GETELEMS,
-                                        mkARMNRS(ARMNRS_Reg, res, 0),
-                                        mkARMNRS(ARMNRS_Scalar, arg, index),
-                                        size, False));
-         return res;
       }
 
       if (e->Iex.Binop.op == Iop_GetElem8x16
           || e->Iex.Binop.op == Iop_GetElem16x8
           || e->Iex.Binop.op == Iop_GetElem32x4) {
-         HReg res = newVRegI(env);
-         HReg arg = iselNeonExpr(env, e->Iex.Binop.arg1);
-         UInt index, size;
-         if (e->Iex.Binop.arg2->tag != Iex_Const ||
-             typeOfIRExpr(env->type_env, e->Iex.Binop.arg2) != Ity_I8) {
-            vpanic("ARM target supports GetElem with constant "
-                   "second argument only\n");
+         if (env->hwcaps & VEX_HWCAPS_ARM_NEON) {
+            HReg res = newVRegI(env);
+            HReg arg = iselNeonExpr(env, e->Iex.Binop.arg1);
+            UInt index, size;
+            if (e->Iex.Binop.arg2->tag != Iex_Const ||
+                typeOfIRExpr(env->type_env, e->Iex.Binop.arg2) != Ity_I8) {
+               vpanic("ARM target supports GetElem with constant "
+                      "second argument only (neon)\n");
+            }
+            index = e->Iex.Binop.arg2->Iex.Const.con->Ico.U8;
+            switch (e->Iex.Binop.op) {
+               case Iop_GetElem8x16: vassert(index < 16); size = 0; break;
+               case Iop_GetElem16x8: vassert(index < 8); size = 1; break;
+               case Iop_GetElem32x4: vassert(index < 4); size = 2; break;
+               default: vassert(0);
+            }
+            addInstr(env, ARMInstr_NUnaryS(ARMneon_GETELEMS,
+                                           mkARMNRS(ARMNRS_Reg, res, 0),
+                                           mkARMNRS(ARMNRS_Scalar, arg, index),
+                                           size, True));
+            return res;
          }
-         index = e->Iex.Binop.arg2->Iex.Const.con->Ico.U8;
-         switch (e->Iex.Binop.op) {
-            case Iop_GetElem8x16: vassert(index < 16); size = 0; break;
-            case Iop_GetElem16x8: vassert(index < 8); size = 1; break;
-            case Iop_GetElem32x4: vassert(index < 4); size = 2; break;
-            default: vassert(0);
-         }
-         addInstr(env, ARMInstr_NUnaryS(ARMneon_GETELEMS,
-                                        mkARMNRS(ARMNRS_Reg, res, 0),
-                                        mkARMNRS(ARMNRS_Scalar, arg, index),
-                                        size, True));
-         return res;
       }
 
       /* All cases involving host-side helper calls. */
@@ -2165,7 +2176,9 @@ static void iselInt64Expr_wrk ( HReg* rHi, HReg* rLo, ISelEnv* env, IRExpr* e )
 
 static HReg iselNeon64Expr ( ISelEnv* env, IRExpr* e )
 {
-   HReg r = iselNeon64Expr_wrk( env, e );
+   HReg r;
+   vassert(env->hwcaps & VEX_HWCAPS_ARM_NEON);
+   r = iselNeon64Expr_wrk( env, e );
    vassert(hregClass(r) == HRcFlt64);
    vassert(hregIsVirtual(r));
    return r;
@@ -3773,9 +3786,12 @@ static HReg iselNeon64Expr_wrk ( ISelEnv* env, IRExpr* e )
    vpanic("iselNeon64Expr");
 }
 
+
 static HReg iselNeonExpr ( ISelEnv* env, IRExpr* e )
 {
-   HReg r = iselNeonExpr_wrk( env, e );
+   HReg r;
+   vassert(env->hwcaps & VEX_HWCAPS_ARM_NEON);
+   r = iselNeonExpr_wrk( env, e );
    vassert(hregClass(r) == HRcVec128);
    vassert(hregIsVirtual(r));
    return r;
@@ -6341,7 +6357,7 @@ HInstrArray* iselSB_ARM ( const IRSB* bb,
    arm_hwcaps = hwcaps_host; // JRS 2012 Mar 31: FIXME (RM)
 
    /* Make up an initial environment to use. */
-   env = LibVEX_Alloc(sizeof(ISelEnv));
+   env = LibVEX_Alloc_inline(sizeof(ISelEnv));
    env->vreg_ctr = 0;
 
    /* Set up output code array. */
@@ -6353,8 +6369,8 @@ HInstrArray* iselSB_ARM ( const IRSB* bb,
    /* Make up an IRTemp -> virtual HReg mapping.  This doesn't
       change as we go along. */
    env->n_vregmap = bb->tyenv->types_used;
-   env->vregmap   = LibVEX_Alloc(env->n_vregmap * sizeof(HReg));
-   env->vregmapHI = LibVEX_Alloc(env->n_vregmap * sizeof(HReg));
+   env->vregmap   = LibVEX_Alloc_inline(env->n_vregmap * sizeof(HReg));
+   env->vregmapHI = LibVEX_Alloc_inline(env->n_vregmap * sizeof(HReg));
 
    /* and finally ... */
    env->chainingAllowed = chainingAllowed;
@@ -6370,18 +6386,18 @@ HInstrArray* iselSB_ARM ( const IRSB* bb,
          case Ity_I1:
          case Ity_I8:
          case Ity_I16:
-         case Ity_I32:  hreg   = mkHReg(j++, HRcInt32, True); break;
+         case Ity_I32:  hreg   = mkHReg(True, HRcInt32, 0, j++); break;
          case Ity_I64:
             if (hwcaps_host & VEX_HWCAPS_ARM_NEON) {
-               hreg = mkHReg(j++, HRcFlt64, True);
+               hreg = mkHReg(True, HRcFlt64, 0, j++);
             } else {
-               hregHI = mkHReg(j++, HRcInt32, True);
-               hreg   = mkHReg(j++, HRcInt32, True);
+               hregHI = mkHReg(True, HRcInt32, 0, j++);
+               hreg   = mkHReg(True, HRcInt32, 0, j++);
             }
             break;
-         case Ity_F32:  hreg   = mkHReg(j++, HRcFlt32, True); break;
-         case Ity_F64:  hreg   = mkHReg(j++, HRcFlt64, True); break;
-         case Ity_V128: hreg   = mkHReg(j++, HRcVec128, True); break;
+         case Ity_F32:  hreg   = mkHReg(True, HRcFlt32,  0, j++); break;
+         case Ity_F64:  hreg   = mkHReg(True, HRcFlt64,  0, j++); break;
+         case Ity_V128: hreg   = mkHReg(True, HRcVec128, 0, j++); break;
          default: ppIRType(bb->tyenv->types[i]);
                   vpanic("iselBB: IRTemp type");
       }
@@ -6418,3 +6434,4 @@ HInstrArray* iselSB_ARM ( const IRSB* bb,
 /*---------------------------------------------------------------*/
 /*--- end                                     host_arm_isel.c ---*/
 /*---------------------------------------------------------------*/
+
