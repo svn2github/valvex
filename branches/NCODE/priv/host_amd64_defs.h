@@ -426,7 +426,7 @@ typedef
       HReg*          regsR; /* Result regs, INVALID_HREG terminated */
       HReg*          regsA; /* Arg regs, ditto */
       HReg*          regsS; /* Scratch regs, ditto */
-      HRegSet*       liveAfter; /* initially NULL, filled in by RA */
+      RRegSet*       rrLiveAfter; /* initially NULL, filled in by RA */
    }
    AMD64InstrNCode;
 

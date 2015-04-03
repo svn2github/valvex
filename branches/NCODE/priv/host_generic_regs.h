@@ -182,58 +182,7 @@ static inline Bool hregIsInvalid ( HReg r )
 
 
 /*---------------------------------------------------------*/
-/*--- Representing register sets                        ---*/
-/*---------------------------------------------------------*/
-
-/* This is a very un-clever representation, but we need
-   to start somewhere. */
-
-#define N_HREG_SET 20
-
-typedef
-   struct {
-      HReg regs[N_HREG_SET];
-      UInt regsUsed; /* 0 .. N_HREG_SET inclusive */
-   }
-   HRegSet;
-
-/* Print a register set, using the arch-specific register printing
-   function |regPrinter| supplied. */
-extern void HRegSet__pp ( HRegSet* set, void (*regPrinter)(HReg) );
-
-/* Create a new, empty, set. */
-extern HRegSet* HRegSet__new ( void );
-
-/* Install elements from vec[0 .. nVec-1].  The previous contents of
-   |dst| are lost. */
-extern void HRegSet__fromVec ( /*MOD*/HRegSet* dst,
-                               const HReg* vec, UInt nVec );
-
-/* Copy the contents of |regs| into |dst|.  The previous contents of
-   |dst| are lost. */
-extern void HRegSet__copy ( /*MOD*/HRegSet* dst, const HRegSet* regs );
-
-/* Add |reg| to |dst|. */
-extern void HRegSet__add ( /*MOD*/HRegSet* dst, HReg reg );
-
-/* Remove |reg| from |dst|. */
-extern void HRegSet__del ( /*MOD*/HRegSet* dst, HReg reg );
-
-/* Add |regs| to |dst|. */
-extern void HRegSet__plus ( /*MOD*/HRegSet* dst, const HRegSet* regs );
-
-/* Remove |regs| from |dst|. */
-extern void HRegSet__minus ( /*MOD*/HRegSet* dst, const HRegSet* regs );
-
-/* Returns the number of elements in |set|. */
-extern UInt HRegSet__size ( const HRegSet* set );
-
-/* Returns the |ix|th element of |set|, where |ix| is zero-based. */
-extern HReg HRegSet__index ( const HRegSet* set, UInt ix );
-
-
-/*---------------------------------------------------------*/
-/*--- Real register Universes.                          ---*/
+/*--- Real Register Universes                           ---*/
 /*---------------------------------------------------------*/
 
 /* A "Real Register Universe" is a read-only structure that contains
@@ -282,23 +231,68 @@ void RRegUniverse__init ( /*OUT*/RRegUniverse* );
 void RRegUniverse__check_is_sane ( const RRegUniverse* );
 
 /* Print an RRegUniverse, for debugging. */
-void RRegUniverse__show ( const RRegUniverse* );
+void RRegUniverse__pp ( const RRegUniverse* );
 
 
 /*---------------------------------------------------------*/
-/*--- Real register sets.                               ---*/
+/*--- Real Register Sets                                ---*/
 /*---------------------------------------------------------*/
 
-/* Represents sets of real registers.  |bitset| is interpreted in the
-   context of |univ|.  That is, each bit index |i| in |bitset|
-   corresponds to the register |univ->regs[i]|.  This relies
-   entirely on the fact that N_RREGUNIVERSE_REGS <= 64. */
-typedef
-   struct {
-      ULong         bitset;
-      RRegUniverse* univ;
-   }
-   RRegSet;
+/* ABSTYPE */
+typedef  struct _RRegSet  RRegSet;
+
+/* Print a register set, using the arch-specific register printing
+   function |regPrinter| supplied. */
+extern void RRegSet__pp ( const RRegSet* set, void (*regPrinter)(HReg) );
+
+/* Create a new, empty, set. */
+extern RRegSet* RRegSet__new ( const RRegUniverse* univ );
+
+/* Return the RRegUniverse for a given RRegSet. */
+extern const RRegUniverse* RRegSet__getUniverse ( const RRegSet* );
+
+/* Install elements from vec[0 .. nVec-1].  The previous contents of
+   |dst| are lost. */
+extern void RRegSet__fromVec ( /*MOD*/RRegSet* dst,
+                               const HReg* vec, UInt nVec );
+
+/* Copy the contents of |regs| into |dst|.  The previous contents of
+   |dst| are lost. */
+extern void RRegSet__copy ( /*MOD*/RRegSet* dst, const RRegSet* regs );
+
+/* Add |reg| to |dst|. */
+extern void RRegSet__add ( /*MOD*/RRegSet* dst, HReg reg );
+
+/* Remove |reg| from |dst|. */
+extern void RRegSet__del ( /*MOD*/RRegSet* dst, HReg reg );
+
+/* Add |regs| to |dst|. */
+extern void RRegSet__plus ( /*MOD*/RRegSet* dst, const RRegSet* regs );
+
+/* Remove |regs| from |dst|. */
+extern void RRegSet__minus ( /*MOD*/RRegSet* dst, const RRegSet* regs );
+
+/* Returns the number of elements in |set|. */
+extern UInt RRegSet__card ( const RRegSet* set );
+
+
+/* Iterating over RRegSets. */
+/* ABSTYPE */
+typedef  struct _RRegSetIterator  RRegSetIterator;
+
+/* Create a new iterator.  It must be initialised with __init before
+   it can be used in __next calls.  This is checked in __next. */
+extern RRegSetIterator* RRegSetIterator__new ( void );
+
+/* Initialise an iterator for iterating over the given set. */
+extern void RRegSetIterator__init ( /*OUT*/RRegSetIterator* iter,
+                                    const RRegSet* set );
+
+/* Get the next element out of an iterator.  If there are no more
+   elements, HReg_INVALID is returned.  This pretty much implies (and
+   is checked) that the set construction routines above cannot be used
+   to insert HReg_INVALID into a set. */
+extern HReg RRegSetIterator__next ( /*MOD*/RRegSetIterator* );
 
 
 /*---------------------------------------------------------*/

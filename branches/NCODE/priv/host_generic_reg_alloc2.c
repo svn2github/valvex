@@ -1604,17 +1604,17 @@ HInstrArray* doRegisterAllocation (
         if (ai->tag == Ain_NCode) {
            AMD64InstrNCode* details = ai->Ain.NCode.details;
            //vex_printf("RA: after NCode: ");
-           vassert(details->liveAfter == NULL);
-           HRegSet* live_after_NCode = HRegSet__new();
+           vassert(details->rrLiveAfter == NULL);
+           RRegSet* rrLive_after_NCode = RRegSet__new(univ);
            for (Int k = 0; k < n_rregs; k++) {
               if (rreg_state[k].disp == Free) 
                  continue;
               //ppHRegAMD64(rreg_state[k].rreg);
-              HRegSet__add(live_after_NCode, univ->regs[k]);
+              RRegSet__add(rrLive_after_NCode, univ->regs[k]);
               //vex_printf(" ");
            }
            //vex_printf("\n");
-           details->liveAfter = live_after_NCode;
+           details->rrLiveAfter = rrLive_after_NCode;
         }
       }
 

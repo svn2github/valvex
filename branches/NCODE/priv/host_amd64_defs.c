@@ -217,7 +217,7 @@ AMD64AMode* AMD64AMode_IR ( UInt imm32, HReg reg ) {
    return am;
 }
 AMD64AMode* AMD64AMode_IRS ( UInt imm32, HReg reg, Int shift ) {
-   AMD64AMode* am = LibVEX_Alloc(sizeof(AMD64AMode));
+   AMD64AMode* am = LibVEX_Alloc_inline(sizeof(AMD64AMode));
    am->tag           = Aam_IRS;
    am->Aam.IRS.imm   = imm32;
    am->Aam.IRS.reg   = reg;
@@ -803,7 +803,7 @@ AMD64Instr* AMD64Instr_MovxLQ ( Bool syned, HReg src, HReg dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_MovxWQ ( Bool syned, HReg src, HReg dst ) {
-   AMD64Instr* i       = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i       = LibVEX_Alloc_inline(sizeof(AMD64Instr));
    i->tag              = Ain_MovxWQ;
    i->Ain.MovxWQ.syned = syned;
    i->Ain.MovxWQ.src   = src;
@@ -1068,30 +1068,30 @@ AMD64Instr* AMD64Instr_ProfInc ( void ) {
 }
 AMD64Instr* AMD64Instr_NCode ( NCodeTemplate* tmpl, HReg* regsR,
                                HReg* regsA, HReg* regsS ) {
-   AMD64InstrNCode* details = LibVEX_Alloc(sizeof(AMD64InstrNCode));
-   details->tmpl      = tmpl;
-   details->regsR     = regsR;
-   details->regsA     = regsA;
-   details->regsS     = regsS;
-   details->liveAfter = NULL;
-   AMD64Instr* i = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64InstrNCode* details = LibVEX_Alloc_inline(sizeof(AMD64InstrNCode));
+   details->tmpl        = tmpl;
+   details->regsR       = regsR;
+   details->regsA       = regsA;
+   details->regsS       = regsS;
+   details->rrLiveAfter = NULL;
+   AMD64Instr* i = LibVEX_Alloc_inline(sizeof(AMD64Instr));
    i->tag               = Ain_NCode;
    i->Ain.NCode.details = details;
    return i;
 }
 AMD64Instr* AMD64Instr_NC_Jmp32 ( AMD64CondCode cc ) {
-   AMD64Instr* i = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i = LibVEX_Alloc_inline(sizeof(AMD64Instr));
    i->tag             = Ain_NC_Jmp32;
    i->Ain.NC_Jmp32.cc = cc;
    return i;
 }
 AMD64Instr* AMD64Instr_NC_CallR11 ( void ) {
-   AMD64Instr* i = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i = LibVEX_Alloc_inline(sizeof(AMD64Instr));
    i->tag        = Ain_NC_CallR11;
    return i;
 }
 AMD64Instr* AMD64Instr_NC_TestQ ( HReg src, HReg dst ) {
-   AMD64Instr* i = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i = LibVEX_Alloc_inline(sizeof(AMD64Instr));
    i->tag              = Ain_NC_TestQ;
    i->Ain.NC_TestQ.src = src;
    i->Ain.NC_TestQ.dst = dst;
@@ -3998,7 +3998,7 @@ static void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
                                /*MOD*/RelocationBuffer* rb,
                                const NInstr* ni,
                                const NRegMap* nregMap,
-                               const HRegSet* hregsLiveAfter,
+                               const RRegSet* rrLiveAfter,
                                /* for debug printing only */
                                Bool verbose, NLabel niLabel );
 
@@ -4029,7 +4029,8 @@ Bool emit_AMD64NCode ( /*MOD*/AssemblyBuffer*   ab_hot,
 
    const AMD64InstrNCode* hi_details     = hi->Ain.NCode.details;
    const NCodeTemplate*   tmpl           = hi_details->tmpl;
-   const HRegSet*         hregsLiveAfter = hi_details->liveAfter;
+   const RRegSet*         rregsLiveAfter = hi_details->rrLiveAfter;
+   const RRegUniverse*    univ           = RRegSet__getUniverse(rregsLiveAfter);
 
    NRegMap nregMap;
    nregMap.regsR  = hi_details->regsR;
@@ -4078,7 +4079,7 @@ Bool emit_AMD64NCode ( /*MOD*/AssemblyBuffer*   ab_hot,
       offsetsHot[i] = AssemblyBuffer__getNext(ab_hot);
       NLabel lbl = mkNLabel(Nlz_Hot, i);
       emit_AMD64NInstr(ab_hot, rb, tmpl->hot[i], &nregMap,
-                       hregsLiveAfter, verbose, lbl);
+                       rregsLiveAfter, verbose, lbl);
    }   
 
    /* And the cold code */
@@ -4086,7 +4087,7 @@ Bool emit_AMD64NCode ( /*MOD*/AssemblyBuffer*   ab_hot,
       offsetsCold[i] = AssemblyBuffer__getNext(ab_cold);
       NLabel lbl = mkNLabel(Nlz_Cold, i);
       emit_AMD64NInstr(ab_cold, rb, tmpl->cold[i], &nregMap,
-                       hregsLiveAfter, verbose, lbl);
+                       rregsLiveAfter, verbose, lbl);
    }
 
    /* Now visit the new relocation entries. */
@@ -4132,69 +4133,69 @@ Bool emit_AMD64NCode ( /*MOD*/AssemblyBuffer*   ab_hot,
       HReg rcx = hregAMD64_RCX();
       HReg rdx = hregAMD64_RDX();
 
-      HRegSet* rs = HRegSet__new();
+      RRegSet* rs = RRegSet__new(univ);
       vex_printf("\n__new\n");
-      vex_printf("1:  "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      vex_printf("1:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
       vex_printf("\n__add\n");
-      HRegSet__add(rs, rbx);
-      vex_printf("2:  "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__add(rs, rbx);
+      vex_printf("2:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
-      HRegSet__add(rs, rdx);
-      vex_printf("3:  "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__add(rs, rdx);
+      vex_printf("3:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
-      HRegSet__add(rs, rcx);
-      vex_printf("4:  "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__add(rs, rcx);
+      vex_printf("4:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
-      HRegSet__add(rs, rcx);
-      vex_printf("5:  "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__add(rs, rcx);
+      vex_printf("5:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
-      HRegSet__add(rs, r10);
-      vex_printf("6:  "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__add(rs, r10);
+      vex_printf("6:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
-      HRegSet__add(rs, rax);
-      vex_printf("7:  "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__add(rs, rax);
+      vex_printf("7:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
       vex_printf("\n__fromVec\n");
       const HReg vec[4] = { rdx, rcx, rbx, rax };
-      HRegSet__fromVec(rs, vec, 0);
-      vex_printf("8:  "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__fromVec(rs, vec, 0);
+      vex_printf("8:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
-      HRegSet__fromVec(rs, vec, 4);
-      vex_printf("9:  "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__fromVec(rs, vec, 4);
+      vex_printf("9:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
       vex_printf("\n__del\n");
-      HRegSet__del(rs, rcx);
-      vex_printf("10: "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__del(rs, rcx);
+      vex_printf("10: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
-      HRegSet__del(rs, rcx);
-      vex_printf("11: "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__del(rs, rcx);
+      vex_printf("11: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
-      HRegSet__del(rs, rbx);
-      vex_printf("12: "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__del(rs, rbx);
+      vex_printf("12: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
-      HRegSet__del(rs, rax);
-      vex_printf("13: "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__del(rs, rax);
+      vex_printf("13: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
-      HRegSet__del(rs, rdx);
-      vex_printf("14: "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__del(rs, rdx);
+      vex_printf("14: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
-      HRegSet__del(rs, rdx);
-      vex_printf("15: "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__del(rs, rdx);
+      vex_printf("15: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
 
       vex_printf("\n__plus\n");
-      HRegSet* rs2 = HRegSet__new();
-      HRegSet__add(rs, r10);  HRegSet__add(rs, rax);
-      HRegSet__add(rs2, rbx); HRegSet__add(rs2, rcx); HRegSet__add(rs2, rax);
+      RRegSet* rs2 = RRegSet__new(univ);
+      RRegSet__add(rs, r10);  RRegSet__add(rs, rax);
+      RRegSet__add(rs2, rbx); RRegSet__add(rs2, rcx); RRegSet__add(rs2, rax);
 
-      HRegSet__plus(rs2, rs);
-      vex_printf("16a: "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-      vex_printf("16b: "); HRegSet__pp(rs2, ppHRegAMD64); vex_printf("\n");
+      RRegSet__plus(rs2, rs);
+      vex_printf("16a: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      vex_printf("16b: "); RRegSet__pp(rs2, ppHRegAMD64); vex_printf("\n");
 
       vex_printf("\n__minus\n");
-      HRegSet__minus(rs, rs2);
-      vex_printf("17: "); HRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
+      RRegSet__minus(rs, rs2);
+      vex_printf("17: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
 
    }
 
@@ -4230,7 +4231,7 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
                         /*MOD*/RelocationBuffer* rb,
                         const NInstr* ni,
                         const NRegMap* nregMap,
-                        const HRegSet* hregsLiveAfter,
+                        const RRegSet* hregsLiveAfter,
                         /* the next 2 are for debug printing only */
                         Bool verbose, NLabel niLabel )
 {
@@ -4320,80 +4321,81 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
             overestimate of (1) -- for example, all regs available to
             reg-alloc -- and refine it later.
          */
-         const HRegSet* set_1 = hregsLiveAfter; //HRegSet__new();
-         //if (0) { 
-         //  Int nregs; HReg* arr;
-         //  getAllocableRegs_AMD64(&nregs, &arr);
-         //  HRegSet__fromVec(set_1, arr, nregs);
-         // }
+         const RRegUniverse* univ = RRegSet__getUniverse(hregsLiveAfter);
+         const RRegSet* set_1 = hregsLiveAfter;
 
-         HRegSet* set_2 = HRegSet__new();
+         RRegSet* set_2 = RRegSet__new(univ);
          { UInt i;
            for (i = 0; i < nregMap->nRegsR; i++)
-              HRegSet__add(set_2, nregMap->regsR[i]);
+              RRegSet__add(set_2, nregMap->regsR[i]);
            for (i = 0; i < nregMap->nRegsA; i++)
-              HRegSet__add(set_2, nregMap->regsA[i]);
+              RRegSet__add(set_2, nregMap->regsA[i]);
            for (i = 0; i < nregMap->nRegsS; i++)
-              HRegSet__add(set_2, nregMap->regsS[i]);
+              RRegSet__add(set_2, nregMap->regsS[i]);
          }         
 
-         HRegSet* set_3 = HRegSet__new();
+         RRegSet* set_3 = RRegSet__new(univ);
          // callee-saves: rbx rbp r12 r13 r14 r15
          { HReg vec[6];
             vec[0] = hregAMD64_RBX(); vec[1] = hregAMD64_RBP();
             vec[2] = hregAMD64_R12(); vec[3] = hregAMD64_R13();
             vec[4] = hregAMD64_R14(); vec[5] = hregAMD64_R15();
-            HRegSet__fromVec(set_3, vec, sizeof(vec)/sizeof(vec[0]));
+            RRegSet__fromVec(set_3, vec, sizeof(vec)/sizeof(vec[0]));
          }
 
-         HRegSet* set_4 = HRegSet__new();
+         RRegSet* set_4 = RRegSet__new(univ);
          if (!isNRegINVALID(ni->Nin.Call.resHi))
-            HRegSet__add(set_4, mapNReg(nregMap, ni->Nin.Call.resHi));
+            RRegSet__add(set_4, mapNReg(nregMap, ni->Nin.Call.resHi));
          if (!isNRegINVALID(ni->Nin.Call.resLo))
-            HRegSet__add(set_4, mapNReg(nregMap, ni->Nin.Call.resLo));
+            RRegSet__add(set_4, mapNReg(nregMap, ni->Nin.Call.resLo));
 
-         HRegSet* to_preserve = HRegSet__new();
-         HRegSet__copy(to_preserve, set_1);
-         HRegSet__plus(to_preserve, set_2);
-         HRegSet__minus(to_preserve, set_3);
-         HRegSet__minus(to_preserve, set_4);
+         RRegSet* to_preserve = RRegSet__new(univ);
+         RRegSet__copy(to_preserve, set_1);
+         RRegSet__plus(to_preserve, set_2);
+         RRegSet__minus(to_preserve, set_3);
+         RRegSet__minus(to_preserve, set_4);
 
          if (verbose) {
             vex_printf("              # set1: ");
-            HRegSet__pp(set_1, ppHRegAMD64); vex_printf("\n");
+            RRegSet__pp(set_1, ppHRegAMD64); vex_printf("\n");
             vex_printf("              # set2: ");
-            HRegSet__pp(set_2, ppHRegAMD64); vex_printf("\n");
+            RRegSet__pp(set_2, ppHRegAMD64); vex_printf("\n");
             vex_printf("              # set3: ");
-            HRegSet__pp(set_3, ppHRegAMD64); vex_printf("\n");
+            RRegSet__pp(set_3, ppHRegAMD64); vex_printf("\n");
             vex_printf("              # set4: ");
-            HRegSet__pp(set_4, ppHRegAMD64); vex_printf("\n");
+            RRegSet__pp(set_4, ppHRegAMD64); vex_printf("\n");
             vex_printf("              # pres: ");
-            HRegSet__pp(to_preserve, ppHRegAMD64); vex_printf("\n");
+            RRegSet__pp(to_preserve, ppHRegAMD64); vex_printf("\n");
          }
 
          /* Save live regs */
-         UInt n_to_preserve = HRegSet__size(to_preserve);
+         UInt n_to_preserve = RRegSet__card(to_preserve);
          vassert(n_to_preserve < 25); /* stay sane */
 
          /* Figure out how much to move the stack, ensuring any alignment up
             to 32 is preserved. */
          UInt stackMove = n_to_preserve * 16;
          stackMove = (stackMove + 31) & ~31;
-
-         UInt i;
          if (stackMove > 0) {
             HI( AMD64Instr_Alu64R(Aalu_SUB, AMD64RMI_Imm(stackMove), 
                                             hregAMD64_RSP()) );
          }
-         for (i = 0; i < n_to_preserve; i++) {
-            HReg r = HRegSet__index(to_preserve, i);
+
+         RRegSetIterator* iter = RRegSetIterator__new();
+         RRegSetIterator__init(iter, to_preserve);
+         UInt slotNo = 0;
+         while (True) {
+            HReg r = RRegSetIterator__next(iter);
+            if (hregIsInvalid(r)) break;
             AMD64Instr* i1 = NULL;
             AMD64Instr* i2 = NULL;
             genSpill_AMD64( (HInstr**)&i1, (HInstr**)&i2,
-                            r, True/*spRel*/, 16 * i, True/*mode64*/ );
+                            r, True/*spRel*/, 16 * slotNo, True/*mode64*/ );
             if (i1) HI(i1);
             if (i2) HI(i2);
+            slotNo++;
          }
+         vassert(slotNo == n_to_preserve);
 
          /* Marshall args for the call, do the call, marshal the result */
          /* Case: 1 arg reg, 1 result reg */
@@ -4424,15 +4426,20 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
          }
 
          /* Restore live regs */
-         for (i = 0; i < n_to_preserve; i++) {
-            HReg r = HRegSet__index(to_preserve, i);
+         RRegSetIterator__init(iter, to_preserve);
+         slotNo = 0;
+         while (True) {
+            HReg r = RRegSetIterator__next(iter);
+            if (hregIsInvalid(r)) break;
             AMD64Instr* i1 = NULL;
             AMD64Instr* i2 = NULL;
             genReload_AMD64( (HInstr**)&i1, (HInstr**)&i2,
-                             r, True/*spRel*/, 16 * i, True/*mode64*/ );
+                             r, True/*spRel*/, 16 * slotNo, True/*mode64*/ );
             if (i1) HI(i1);
             if (i2) HI(i2);
+            slotNo++;
          }
+         vassert(slotNo == n_to_preserve);
          if (stackMove > 0) {
             HI( AMD64Instr_Alu64R(Aalu_ADD, AMD64RMI_Imm(stackMove), 
                                             hregAMD64_RSP()) );

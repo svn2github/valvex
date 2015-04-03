@@ -83,253 +83,6 @@ void ppHReg ( HReg r )
 
 
 /*---------------------------------------------------------*/
-/*--- A simple implementation of register sets          ---*/
-/*---------------------------------------------------------*/
-
-/* Helper function, to sort HReg values in an array. */
-static void sortHRegArray ( HReg* arr, Int nArr )
-{
-   Int  incs[14] = { 1, 4, 13, 40, 121, 364, 1093, 3280,
-                     9841, 29524, 88573, 265720,
-                     797161, 2391484 };
-   Int  lo = 0;
-   Int  hi = nArr-1;
-   Int  i, j, h, bigN, hp;
-   HReg v;
-
-   vassert(nArr >= 0);
-   if (nArr == 0) return;
-
-   bigN = hi - lo + 1; if (bigN < 2) return;
-   hp = 0; while (hp < 14 && incs[hp] < bigN) hp++; hp--;
-
-   for ( ; hp >= 0; hp--) {
-      h = incs[hp];
-      for (i = lo + h; i <= hi; i++) {
-         v = arr[i];
-         j = i;
-         while (arr[j-h].u32 > v.u32) {
-            arr[j] = arr[j-h];
-            j = j - h;
-            if (j <= (lo + h - 1)) break;
-         }
-         arr[j] = v;
-      }
-   }
-}
-
-/* Print a register set, using the arch-specific register printing
-   function |regPrinter| supplied. */
-void HRegSet__pp ( HRegSet* set, void (*regPrinter)(HReg) )
-{
-   UInt i;
-   vex_printf("{");
-   for (i = 0; i < set->regsUsed; i++) {
-      regPrinter(set->regs[i]);
-      if (i+1 != set->regsUsed)
-         vex_printf(",");
-   }
-   vex_printf("}");
-}
-
-/* Create a new, empty, set. */
-HRegSet* HRegSet__new ( void )
-{
-   HRegSet* set = LibVEX_Alloc(sizeof(HRegSet));
-   set->regsUsed = 0;
-   return set;
-}
-
-/* Install elements from vec[0 .. nVec-1].  The previous contents of
-   |dst| are lost.  vec[0 .. nVec-1] may not contain any
-   duplicates. */
-void HRegSet__fromVec ( /*MOD*/HRegSet* dst, const HReg* vec, UInt nVec )
-{
-   UInt i;
-   vassert(nVec <= N_HREG_SET);
-   for (i = 0; i < nVec; i++) {
-      dst->regs[i] = vec[i];
-   }
-   dst->regsUsed = nVec;
-   sortHRegArray(&dst->regs[0], dst->regsUsed);
-   /* Assert no duplicates (and, as a side effect, in-order) */
-   for (i = 1; i < dst->regsUsed; i++) {
-      /* If this fails, your vec[] contains duplicates. */
-      vassert(dst->regs[i-1].u32 < dst->regs[i].u32);
-   }
-}
-
-/* Copy the contents of |regs| into |dst|.  The previous contents of
-   |dst| are lost. */
-void HRegSet__copy ( /*MOD*/HRegSet* dst, const HRegSet* regs )
-{
-   UInt i;
-   dst->regsUsed = regs->regsUsed;
-   for (i = 0; i < regs->regsUsed; i++)
-      dst->regs[i] = regs->regs[i];
-}
-
-/* Add |reg| to |dst|. */
-void HRegSet__add ( /*MOD*/HRegSet* dst, HReg reg )
-{
-   UInt i, j;
-   for (i = 0; i < dst->regsUsed; i++) {
-      if (reg.u32 <= dst->regs[i].u32)
-         break;
-   }
-   /* Is it already present? */
-   if (i < dst->regsUsed && reg.u32 == dst->regs[i].u32) {
-      /* Yes.  Do nothing more. */
-      return;
-   }
-   /* No.  Add it at position |i|. */
-   vassert(dst->regsUsed < N_HREG_SET);
-   dst->regsUsed++;
-   for (j = dst->regsUsed-1; j > i; j--) {
-      dst->regs[j] = dst->regs[j-1];
-   }
-   dst->regs[i] = reg;
-}
-
-/* Remove |reg| from |dst|. */
-void HRegSet__del ( /*MOD*/HRegSet* dst, HReg reg )
-{
-   UInt i, j;
-   for (i = 0; i < dst->regsUsed; i++) {
-      if (reg.u32 <= dst->regs[i].u32)
-         break;
-   }
-   /* Is it already present? */
-   if (i < dst->regsUsed && reg.u32 == dst->regs[i].u32) {
-      /* Yes, at position |i|. */;
-      vassert(dst->regsUsed > 0);
-      for (j = i+1; j < dst->regsUsed; j++) {
-         dst->regs[j-1] = dst->regs[j];
-      }
-      dst->regsUsed--;
-   }
-}
-
-/* Add |regs| to |dst|. */
-void HRegSet__plus ( /*MOD*/HRegSet* dst, const HRegSet* regs )
-{
-   /* We'll need to create the result into a temp vector,
-      since |dst| is also one of the sources. */
-   HReg tmp[N_HREG_SET];
-   UInt iD, iR, iT;
-   UInt usedD = dst->regsUsed;
-   UInt usedR = regs->regsUsed;
-   iD = iR = iT = 0;
-
-   while (1) {
-      vassert(iD <= usedD && iR <= usedR);
-      if (iD == usedD && iR == usedR) {
-         /* both empty -- done */
-         break;
-      }
-      vassert(iT < N_HREG_SET);
-      if (iD == usedD && iR != usedR) {
-         /* D empty, use up R */
-         tmp[iT++] = regs->regs[iR++];
-         continue;
-      }
-      if (iD != usedD && iR == usedR) {
-         /* R empty, use up D */
-         tmp[iT++] = dst->regs[iD++];
-         continue;
-      }
-      /* both not empty; use the lowest valued HReg */
-      HReg candD = dst->regs[iD];
-      HReg candR = regs->regs[iR];
-      if (candD.u32 < candR.u32) {
-         tmp[iT++] = candD;
-         iD++;
-      }
-      else if (candD.u32 > candR.u32) {
-         tmp[iT++] = candR;
-         iR++;
-      }
-      else {
-         tmp[iT++] = candD;
-         iD++; iR++;
-      }
-   }
-
-   /* Copy result back into place. */
-   vassert((iT >= usedD || iT >= usedR) && iT <= N_HREG_SET);
-   UInt i;
-   for (i = 0; i < iT; i++) {
-      dst->regs[i] = tmp[i];
-   }
-   dst->regsUsed = iT;
-}
-
-/* Remove |regs| from |dst|. */
-void HRegSet__minus ( /*MOD*/HRegSet* dst, const HRegSet* regs )
-{
-   /* We'll need to create the result into a temp vector,
-      since |dst| is also one of the sources. */
-   HReg tmp[N_HREG_SET];
-   UInt iD, iR, iT;
-   UInt usedD = dst->regsUsed;
-   UInt usedR = regs->regsUsed;
-   iD = iR = iT = 0;
-
-   while (1) {
-      vassert(iD <= usedD && iR <= usedR);
-      if (iD == usedD) {
-         /* D empty -- done */
-         break;
-      }
-      vassert(iT < N_HREG_SET);
-      if (iR == usedR) {
-         /* R empty, use up D */
-         tmp[iT++] = dst->regs[iD++];
-         continue;
-      }
-      /* both not empty */
-      HReg candD = dst->regs[iD];
-      HReg candR = regs->regs[iR];
-      if (candD.u32 < candR.u32) {
-         /* candD can't possibly be in the part of R that we
-            haven't yet visited, so keep it. */
-         tmp[iT++] = candD;
-         iD++;
-      }
-      else if (candD.u32 > candR.u32) {
-         /* We don't know yet if we can retain candD, but for sure,
-            candR won't be able to delete anything in the unvisited
-            part of D.  So skip over candR. */
-         iR++;
-      }
-      else {
-         /* The register appears in both lists, so skip it. */
-         iR++; iD++;
-      }
-   }
-
-   /* Copy result back into place. */
-   vassert((iT <= usedD || iT <= usedR) && iT <= N_HREG_SET);
-   UInt i;
-   for (i = 0; i < iT; i++) {
-      dst->regs[i] = tmp[i];
-   }
-   dst->regsUsed = iT;
-}
-
-/* Returns the number of elements in |set|. */
-UInt HRegSet__size ( const HRegSet* set ) {
-   return set->regsUsed;
-}
-
-/* Returns the |ix|th element of |set|, where |ix| is zero-based. */
-HReg HRegSet__index ( const HRegSet* set, UInt ix ) {
-   vassert(ix < set->regsUsed);
-   return set->regs[ix];
-}
-
-
-/*---------------------------------------------------------*/
 /*--- Real register Universes.                          ---*/
 /*---------------------------------------------------------*/
 
@@ -360,6 +113,176 @@ void RRegUniverse__check_is_sane ( const RRegUniverse* univ )
       HReg reg = univ->regs[i];
       vassert(hregIsInvalid(reg));
    }
+}
+
+
+/*---------------------------------------------------------*/
+/*--- Real register sets                                ---*/
+/*---------------------------------------------------------*/
+
+/* Represents sets of real registers.  |bits| is interpreted in the
+   context of |univ|.  That is, each bit index |i| in |bits|
+   corresponds to the register |univ->regs[i]|.  This relies
+   entirely on the fact that N_RREGUNIVERSE_REGS <= 64.
+*/
+struct _RRegSet {
+   ULong               bits;
+   const RRegUniverse* univ;
+};
+
+STATIC_ASSERT(N_RREGUNIVERSE_REGS <= 8 * sizeof(ULong));
+
+/* Print a register set, using the arch-specific register printing
+   function |regPrinter| supplied. */
+void RRegSet__pp ( const RRegSet* set, void (*regPrinter)(HReg) )
+{
+   const RRegUniverse* univ = set->univ;
+   Bool first = True;
+   vex_printf("{");
+   for (UInt i = 0; i < 8 * sizeof(ULong); i++) {
+      if (0ULL == (set->bits & (1ULL << i)))
+         continue;
+      vassert(i < univ->size);
+      if (!first) {
+         vex_printf(",");
+      } else {
+         first = False;
+      }
+      regPrinter(univ->regs[i]);
+   }
+   vex_printf("}");
+}
+
+/* Create a new, empty, set. */
+RRegSet* RRegSet__new ( const RRegUniverse* univ )
+{
+   vassert(univ);
+   RRegSet* set = LibVEX_Alloc_inline(sizeof(RRegSet));
+   set->bits = 0;
+   set->univ = univ;
+   return set;
+}
+
+/* Return the RRegUniverse for a given RRegSet. */
+const RRegUniverse* RRegSet__getUniverse ( const RRegSet* set )
+{
+   return set->univ;
+}
+
+/* Install elements from vec[0 .. nVec-1].  The previous contents of
+   |dst| are lost.  vec[0 .. nVec-1] may not contain any
+   duplicates. */
+void RRegSet__fromVec ( /*MOD*/RRegSet* dst, const HReg* vec, UInt nVec )
+{
+   for (UInt i = 0; i < nVec; i++) {
+      HReg r = vec[i];
+      vassert(!hregIsInvalid(r) && !hregIsVirtual(r));
+      UInt ix = hregIndex(r);
+      vassert(ix < dst->univ->size);
+      dst->bits |= (1ULL << ix);
+   }
+}
+
+/* Copy the contents of |regs| into |dst|.  The previous contents of
+   |dst| are lost. */
+void RRegSet__copy ( /*MOD*/RRegSet* dst, const RRegSet* regs )
+{
+   vassert(dst->univ == regs->univ);
+   dst->bits = regs->bits;
+}
+
+/* Add |reg| to |dst|. */
+void RRegSet__add ( /*MOD*/RRegSet* dst, HReg reg )
+{
+   vassert(!hregIsInvalid(reg) && !hregIsVirtual(reg));
+   UInt ix = hregIndex(reg);
+   vassert(ix < dst->univ->size);
+   dst->bits |= (1ULL << ix);
+}
+
+/* Remove |reg| from |dst|. */
+void RRegSet__del ( /*MOD*/RRegSet* dst, HReg reg )
+{
+   vassert(!hregIsInvalid(reg) && !hregIsVirtual(reg));
+   UInt ix = hregIndex(reg);
+   vassert(ix < dst->univ->size);
+   dst->bits &= ~(1ULL << ix);
+}
+
+/* Add |regs| to |dst|. */
+void RRegSet__plus ( /*MOD*/RRegSet* dst, const RRegSet* regs )
+{
+   vassert(dst->univ == regs->univ);
+   dst->bits |= regs->bits;
+}
+
+/* Remove |regs| from |dst|. */
+void RRegSet__minus ( /*MOD*/RRegSet* dst, const RRegSet* regs )
+{
+   vassert(dst->univ == regs->univ);
+   dst->bits &= (~regs->bits);
+}
+
+/* Returns the number of elements in |set|. */
+UInt RRegSet__card ( const RRegSet* set )
+{
+   return __builtin_popcountll(set->bits);
+}
+
+
+struct _RRegSetIterator {
+   const RRegSet* set;
+   UInt           nextIx;  /* The next |set->bits| index to try */
+};
+
+/* Create a new iterator.  It can't be used until it is first __init'd. */
+RRegSetIterator* RRegSetIterator__new ( void )
+{
+   RRegSetIterator* iter = LibVEX_Alloc_inline(sizeof(RRegSetIterator));
+   vex_bzero(iter, sizeof(*iter));
+   return iter;
+}
+
+/* Initialise an iterator. */
+void RRegSetIterator__init ( /*OUT*/RRegSetIterator* iter,
+                             const RRegSet* set )
+{
+   iter->set    = set;
+   iter->nextIx = 0;
+   /* We're going to iterate only up as far as the Universe size, so
+      check that there are no elements above that.  RRegSet__add and
+      __fromVec should ensure that is never the case, and there are no
+      other ways to add elements to a set. */
+   const RRegUniverse* univ = set->univ;
+   if (LIKELY(univ->size < 64)) {
+      vassert((set->bits >> univ->size) == 0);
+   } else {
+      vassert(univ->size == 64);
+   }
+}
+
+/* Get the next element from the set, or HReg_INVALID if there is
+   none. */
+HReg RRegSetIterator__next ( /*MOD*/RRegSetIterator* iter )
+{
+   const RRegSet* set = iter->set;
+   /* If this fails, it's possibly a sign that the __init call for
+      |iter| was missed. */
+   vassert(iter->set);
+
+   const RRegUniverse* univ  = set->univ;
+   const UInt          maxIx = univ->size;
+   vassert(iter->nextIx <= maxIx);
+   while (1) {
+      if (UNLIKELY(iter->nextIx >= maxIx)) {
+         return HReg_INVALID;
+      }
+      if (UNLIKELY(0ULL != (set->bits & (1ULL << iter->nextIx)))) {
+         return univ->regs[iter->nextIx++];
+      }
+      iter->nextIx++;
+   }
+   /*NOTREACHED*/
 }
 
 
