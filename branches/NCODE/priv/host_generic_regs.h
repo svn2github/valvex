@@ -238,14 +238,34 @@ void RRegUniverse__pp ( const RRegUniverse* );
 /*--- Real Register Sets                                ---*/
 /*---------------------------------------------------------*/
 
-/* ABSTYPE */
-typedef  struct _RRegSet  RRegSet;
+/* Represents sets of real registers.  |bits| is interpreted in the
+   context of |univ|.  That is, each bit index |i| in |bits|
+   corresponds to the register |univ->regs[i]|.  This relies
+   entirely on the fact that N_RREGUNIVERSE_REGS <= 64.
+
+   It would have been nice to have been able to make this abstract,
+   but it is necessary to declare globals of this type.  Hence the
+   size has to be known to the users of the type and so it can't be
+   abstract.
+*/
+typedef
+   struct {
+      ULong               bits;
+      const RRegUniverse* univ;
+   }
+   RRegSet;
+
+STATIC_ASSERT(N_RREGUNIVERSE_REGS <= 8 * sizeof(ULong));
+
 
 /* Print a register set, using the arch-specific register printing
    function |regPrinter| supplied. */
 extern void RRegSet__pp ( const RRegSet* set, void (*regPrinter)(HReg) );
 
-/* Create a new, empty, set. */
+/* Initialise an RRegSet, making it empty. */
+extern void RRegSet__init ( /*OUT*/RRegSet* set, const RRegUniverse* univ );
+
+/* Create a new, empty, set, in the normal (transient) heap. */
 extern RRegSet* RRegSet__new ( const RRegUniverse* univ );
 
 /* Return the RRegUniverse for a given RRegSet. */
@@ -274,6 +294,11 @@ extern void RRegSet__minus ( /*MOD*/RRegSet* dst, const RRegSet* regs );
 
 /* Returns the number of elements in |set|. */
 extern UInt RRegSet__card ( const RRegSet* set );
+
+/* Remove non-allocatable registers from this set.  Because the set
+   carries its register universe, we can consult that to find the
+   non-allocatable registers, so no other parameters are needed. */
+extern void RRegSet__deleteNonAllocatable ( /*MOD*/RRegSet* set );
 
 
 /* Iterating over RRegSets. */
@@ -343,6 +368,9 @@ static inline void initHRegUsage ( HRegUsage* tab )
 extern void addHRegUse ( HRegUsage*, HRegMode, HReg );
 
 extern Bool HRegUsage__contains ( const HRegUsage*, HReg );
+
+extern void addHRegUse_from_RRegSet ( HRegUsage*, HRegMode, const RRegSet* );
+
 
 /*---------------------------------------------------------*/
 /*--- Indicating register remappings (for reg-alloc)    ---*/
@@ -700,6 +728,46 @@ HInstrArray* doRegisterAllocation (
    /* 32/64bit mode */
    Bool mode64
 );
+
+
+/*---------------------------------------------------------*/
+/*--- NCode generation helpers                          ---*/
+/*---------------------------------------------------------*/
+
+/* Find the length of a vector of HRegs that is terminated by
+   an HReg_INVALID. */
+extern UInt hregVecLen ( const HReg* vec );
+
+
+/* A handy structure to hold the register environment for an NCode
+   block -- that is, the NReg to HReg mapping. */
+typedef
+   struct {
+      UInt        nRegsR;
+      const HReg* regsR;
+      UInt        nRegsA;
+      const HReg* regsA;
+      UInt        nRegsS;
+      const HReg* regsS;
+   }
+   NRegMap;
+
+/* Find the real (hard) register for |r| by looking up in |map|. */
+extern HReg mapNReg ( const NRegMap* map, NReg r );
+
+
+/* Compute the minimal set of registers to preserve around calls
+   embedded within NCode blocks.  See implementation for a detailed
+   comment. */
+extern
+void calcRegistersToPreserveAroundNCodeCall (
+        /*OUT*/RRegSet* result,
+        const RRegSet*  hregsLiveAfterTheNCodeBlock,
+        const RRegSet*  abiCallerSavedRegs,
+        const NRegMap*  nregMap,
+        NReg nregResHi,
+        NReg nregResLo
+     );
 
 
 #endif /* ndef __VEX_HOST_GENERIC_REGS_H */

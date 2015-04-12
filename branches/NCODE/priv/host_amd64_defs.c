@@ -101,6 +101,75 @@ const RRegUniverse* getRRegUniverse_AMD64 ( void )
 }
 
 
+/* Returns the registers in the AMD64 universe that are caller saved.
+   This is really ABI dependent, but we ignore that detail here. */
+static const RRegSet* getRRegsCallerSaved_AMD64 ( void )
+{
+   /* In theory gcc should be able to fold this into a single 64 bit
+      constant (bitset).  But that's a bit risky, so instead do
+      thread-unsafe lazy initialisation (sigh). */
+   static RRegSet callerSavedRegs;
+   static Bool    callerSavedRegs_initted = False;
+
+   if (LIKELY(callerSavedRegs_initted))
+      return &callerSavedRegs;
+
+   RRegSet__init(&callerSavedRegs, getRRegUniverse_AMD64());
+
+   RRegSet__add(&callerSavedRegs, hregAMD64_RAX());
+   RRegSet__add(&callerSavedRegs, hregAMD64_RCX());
+   RRegSet__add(&callerSavedRegs, hregAMD64_RDX());
+   RRegSet__add(&callerSavedRegs, hregAMD64_RSI());
+   RRegSet__add(&callerSavedRegs, hregAMD64_RDI());
+   RRegSet__add(&callerSavedRegs, hregAMD64_R8());
+   RRegSet__add(&callerSavedRegs, hregAMD64_R9());
+   RRegSet__add(&callerSavedRegs, hregAMD64_R10());
+   RRegSet__add(&callerSavedRegs, hregAMD64_R11());
+   RRegSet__add(&callerSavedRegs, hregAMD64_XMM0());
+   RRegSet__add(&callerSavedRegs, hregAMD64_XMM1());
+   RRegSet__add(&callerSavedRegs, hregAMD64_XMM3());
+   RRegSet__add(&callerSavedRegs, hregAMD64_XMM4());
+   RRegSet__add(&callerSavedRegs, hregAMD64_XMM5());
+   RRegSet__add(&callerSavedRegs, hregAMD64_XMM6());
+   RRegSet__add(&callerSavedRegs, hregAMD64_XMM7());
+   RRegSet__add(&callerSavedRegs, hregAMD64_XMM8());
+   RRegSet__add(&callerSavedRegs, hregAMD64_XMM9());
+   RRegSet__add(&callerSavedRegs, hregAMD64_XMM10());
+   RRegSet__add(&callerSavedRegs, hregAMD64_XMM11());
+   RRegSet__add(&callerSavedRegs, hregAMD64_XMM12());
+
+   callerSavedRegs_initted = True;
+   return &callerSavedRegs;
+}
+
+
+/* Returns the registers in the AMD64 universe that are callee saved.
+   This is really ABI dependent, but we ignore that detail here. */
+static const RRegSet* getRRegsCalleeSaved_AMD64 ( void )
+{
+   /* In theory gcc should be able to fold this into a single 64 bit
+      constant (bitset).  But that's a bit risky, so instead do
+      thread-unsafe lazy initialisation (sigh). */
+   static RRegSet calleeSavedRegs;
+   static Bool    calleeSavedRegs_initted = False;
+
+   if (LIKELY(calleeSavedRegs_initted))
+      return &calleeSavedRegs;
+
+   RRegSet__init(&calleeSavedRegs, getRRegUniverse_AMD64());
+
+   RRegSet__add(&calleeSavedRegs, hregAMD64_RBX());
+   RRegSet__add(&calleeSavedRegs, hregAMD64_RBP());
+   RRegSet__add(&calleeSavedRegs, hregAMD64_R12());
+   RRegSet__add(&calleeSavedRegs, hregAMD64_R13());
+   RRegSet__add(&calleeSavedRegs, hregAMD64_R14());
+   RRegSet__add(&calleeSavedRegs, hregAMD64_R15());
+
+   calleeSavedRegs_initted = True;
+   return &calleeSavedRegs;
+}
+
+
 void ppHRegAMD64 ( HReg reg ) 
 {
    Int r;
@@ -1548,31 +1617,9 @@ void getRegUsage_AMD64Instr ( HRegUsage* u, const AMD64Instr* i, Bool mode64 )
          /* This is a bit subtle. */
          /* First off, claim it trashes all the caller-saved regs
             which fall within the register allocator's jurisdiction.
-            These I believe to be: rax rcx rdx rsi rdi r8 r9 r10 r11 
-            and all the xmm registers.
+            These I believe to be: rsi rdi r8 r9 r10 xmm3..xmm12. 
          */
-         addHRegUse(u, HRmWrite, hregAMD64_RAX());
-         addHRegUse(u, HRmWrite, hregAMD64_RCX());
-         addHRegUse(u, HRmWrite, hregAMD64_RDX());
-         addHRegUse(u, HRmWrite, hregAMD64_RSI());
-         addHRegUse(u, HRmWrite, hregAMD64_RDI());
-         addHRegUse(u, HRmWrite, hregAMD64_R8());
-         addHRegUse(u, HRmWrite, hregAMD64_R9());
-         addHRegUse(u, HRmWrite, hregAMD64_R10());
-         addHRegUse(u, HRmWrite, hregAMD64_R11());
-         addHRegUse(u, HRmWrite, hregAMD64_XMM0());
-         addHRegUse(u, HRmWrite, hregAMD64_XMM1());
-         addHRegUse(u, HRmWrite, hregAMD64_XMM3());
-         addHRegUse(u, HRmWrite, hregAMD64_XMM4());
-         addHRegUse(u, HRmWrite, hregAMD64_XMM5());
-         addHRegUse(u, HRmWrite, hregAMD64_XMM6());
-         addHRegUse(u, HRmWrite, hregAMD64_XMM7());
-         addHRegUse(u, HRmWrite, hregAMD64_XMM8());
-         addHRegUse(u, HRmWrite, hregAMD64_XMM9());
-         addHRegUse(u, HRmWrite, hregAMD64_XMM10());
-         addHRegUse(u, HRmWrite, hregAMD64_XMM11());
-         addHRegUse(u, HRmWrite, hregAMD64_XMM12());
-
+         addHRegUse_from_RRegSet(u, HRmWrite, getRRegsCallerSaved_AMD64());
          /* Now we have to state any parameter-carrying registers
             which might be read.  This depends on the regparmness. */
          switch (i->Ain.Call.regparms) {
@@ -3981,251 +4028,9 @@ Bool emit_AMD64Instr ( /*MOD*/AssemblyBuffer* ab,
    so it's already out of commission as far as regalloc is concerned.
    So we can safely use it here, when needed. */
 
-/* A handy structure to hold the register environment. */
-typedef
-   struct {
-      UInt        nRegsR;
-      const HReg* regsR;
-      UInt        nRegsA;
-      const HReg* regsA;
-      UInt        nRegsS;
-      const HReg* regsS;
-   }
-   NRegMap;
-
-/* fwds */
-static void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
-                               /*MOD*/RelocationBuffer* rb,
-                               const NInstr* ni,
-                               const NRegMap* nregMap,
-                               const RRegSet* rrLiveAfter,
-                               /* for debug printing only */
-                               Bool verbose, NLabel niLabel );
-
-static UInt hregVecLen ( const HReg* vec )
-{
-   UInt i;
-   for (i = 0; !hregIsInvalid(vec[i]); i++)
-      ;
-   return i;
-}
-
-/* Generate the AMD64 NCode instruction |hi| into |ab_hot| and
-   |ab_cold|.  This can only handle NCode blocks.  All other AMD64
-   instructions are to be handled by emit_AMD64Instr.  This is
-   required to generate <= 1024 bytes of code.  Returns True if OK,
-   False if not enough buffer space. */
-
-Bool emit_AMD64NCode ( /*MOD*/AssemblyBuffer*   ab_hot,
-                       /*MOD*/AssemblyBuffer*   ab_cold,
-                       /*MOD*/RelocationBuffer* rb,
-                       const AMD64Instr*        hi,
-                       Bool mode64, VexEndness endness_host,
-                       Bool verbose )
-{
-   vassert(mode64 == True);
-   vassert(endness_host == VexEndnessLE);
-   vassert(hi->tag == Ain_NCode);
-
-   const AMD64InstrNCode* hi_details     = hi->Ain.NCode.details;
-   const NCodeTemplate*   tmpl           = hi_details->tmpl;
-   const RRegSet*         rregsLiveAfter = hi_details->rrLiveAfter;
-   const RRegUniverse*    univ           = RRegSet__getUniverse(rregsLiveAfter);
-
-   NRegMap nregMap;
-   nregMap.regsR  = hi_details->regsR;
-   nregMap.regsA  = hi_details->regsA;
-   nregMap.regsS  = hi_details->regsS;
-   nregMap.nRegsR = tmpl->nres;
-   nregMap.nRegsA = tmpl->narg;
-   nregMap.nRegsS = tmpl->nscr;
-
-   vassert(hregVecLen(nregMap.regsR) == nregMap.nRegsR);
-   vassert(hregVecLen(nregMap.regsA) == nregMap.nRegsA);
-   vassert(hregVecLen(nregMap.regsS) == nregMap.nRegsS);
-
-   if (AssemblyBuffer__getRemainingSize(ab_hot) < 1024)
-      return False;
-   if (AssemblyBuffer__getRemainingSize(ab_cold) < 1024)
-      return False;
-   if (RelocationBuffer__getRemainingSize(rb) < 128)
-      return False;
-
-   /* Count how many hot and cold instructions (NInstrs) the template
-      has, since we'll need to allocate temporary arrays to keep track
-      of the label offsets. */
-   UInt nHot, nCold;
-   for (nHot = 0; tmpl->hot[nHot]; nHot++)
-      ;
-   for (nCold = 0; tmpl->cold[nCold]; nCold++)
-      ;
-
-   /* Here are our two arrays for tracking the AssemblyBuffer offsets
-      of the NCode instructions. */
-   UInt i;
-   UInt offsetsHot[nHot];
-   UInt offsetsCold[nCold];
-   for (i = 0; i < nHot;  i++) offsetsHot[i]  = 0;
-   for (i = 0; i < nCold; i++) offsetsCold[i] = 0;
-
-   /* We'll be adding entries to the relocation buffer, |rb|, and will
-      need to adjust their |dst| fields after generation of the hot
-      and cold code.  Record therefore where we are in the buffer now,
-      so that we can iterate over the new entries later. */
-   UInt rb_first = RelocationBuffer__getNext(rb);
-
-   /* Generate the hot code */
-   for (i = 0; i < nHot; i++) {
-      offsetsHot[i] = AssemblyBuffer__getNext(ab_hot);
-      NLabel lbl = mkNLabel(Nlz_Hot, i);
-      emit_AMD64NInstr(ab_hot, rb, tmpl->hot[i], &nregMap,
-                       rregsLiveAfter, verbose, lbl);
-   }   
-
-   /* And the cold code */
-   for (i = 0; i < nCold; i++) {
-      offsetsCold[i] = AssemblyBuffer__getNext(ab_cold);
-      NLabel lbl = mkNLabel(Nlz_Cold, i);
-      emit_AMD64NInstr(ab_cold, rb, tmpl->cold[i], &nregMap,
-                       rregsLiveAfter, verbose, lbl);
-   }
-
-   /* Now visit the new relocation entries. */
-   UInt rb_last1 = RelocationBuffer__getNext(rb);
-
-   for (i = rb_first; i < rb_last1; i++) {
-      Relocation* reloc = &rb->buf[i];
-
-      /* Show the reloc before the label-to-offset transformation. */
-      if (verbose) {
-         vex_printf("   reloc:  ");
-         ppRelocation(reloc);
-         vex_printf("\n");
-      }
-
-      /* Transform the destination component of |reloc| so that it no
-         longer refers to a label but rather to an offset in the hot
-         or cold assembly buffer. */
-      vassert(!reloc->dst.isOffset);
-      reloc->dst.isOffset = True;
-
-      if (reloc->dst.zone == Nlz_Hot) {
-         vassert(reloc->dst.num < nHot);
-         reloc->dst.num = offsetsHot[reloc->dst.num];
-      } else {
-         vassert(reloc->dst.zone == Nlz_Cold);
-         vassert(reloc->dst.num < nCold);
-         reloc->dst.num = offsetsCold[reloc->dst.num];
-      }
-
-      /* Show the reloc after the label-to-offset transformation. */
-      if (verbose) {
-         vex_printf("   reloc:  ");
-         ppRelocation(reloc);
-         vex_printf("\n");
-      }
-   }
-
-   if (0) {
-      HReg r10 = hregAMD64_R10();
-      HReg rax = hregAMD64_RAX();
-      HReg rbx = hregAMD64_RBX();
-      HReg rcx = hregAMD64_RCX();
-      HReg rdx = hregAMD64_RDX();
-
-      RRegSet* rs = RRegSet__new(univ);
-      vex_printf("\n__new\n");
-      vex_printf("1:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      vex_printf("\n__add\n");
-      RRegSet__add(rs, rbx);
-      vex_printf("2:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      RRegSet__add(rs, rdx);
-      vex_printf("3:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      RRegSet__add(rs, rcx);
-      vex_printf("4:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      RRegSet__add(rs, rcx);
-      vex_printf("5:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      RRegSet__add(rs, r10);
-      vex_printf("6:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      RRegSet__add(rs, rax);
-      vex_printf("7:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      vex_printf("\n__fromVec\n");
-      const HReg vec[4] = { rdx, rcx, rbx, rax };
-      RRegSet__fromVec(rs, vec, 0);
-      vex_printf("8:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      RRegSet__fromVec(rs, vec, 4);
-      vex_printf("9:  "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      vex_printf("\n__del\n");
-      RRegSet__del(rs, rcx);
-      vex_printf("10: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      RRegSet__del(rs, rcx);
-      vex_printf("11: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      RRegSet__del(rs, rbx);
-      vex_printf("12: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      RRegSet__del(rs, rax);
-      vex_printf("13: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      RRegSet__del(rs, rdx);
-      vex_printf("14: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-      RRegSet__del(rs, rdx);
-      vex_printf("15: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-
-      vex_printf("\n__plus\n");
-      RRegSet* rs2 = RRegSet__new(univ);
-      RRegSet__add(rs, r10);  RRegSet__add(rs, rax);
-      RRegSet__add(rs2, rbx); RRegSet__add(rs2, rcx); RRegSet__add(rs2, rax);
-
-      RRegSet__plus(rs2, rs);
-      vex_printf("16a: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-      vex_printf("16b: "); RRegSet__pp(rs2, ppHRegAMD64); vex_printf("\n");
-
-      vex_printf("\n__minus\n");
-      RRegSet__minus(rs, rs2);
-      vex_printf("17: "); RRegSet__pp(rs, ppHRegAMD64); vex_printf("\n");
-
-   }
-
-   return True;
-}
-
-/* Find the real (hard) register for |r| by looking up in |map|. */
-static HReg mapNReg ( const NRegMap* map, NReg r )
-{
-   UInt limit = 0;
-   const HReg* arr = NULL;
-   switch (r.role) {
-      case Nrr_Result:   limit = map->nRegsR; arr = map->regsR; break;
-      case Nrr_Argument: limit = map->nRegsA; arr = map->regsA; break;
-      case Nrr_Scratch:  limit = map->nRegsS; arr = map->regsS; break;
-      default: vpanic("mapNReg: invalid reg role");
-   }
-   vassert(r.num < limit);
-   return arr[r.num];
-}
-
-/* ***FIXME*** this is an exact copy of the same in host_amd64_isel.c. */
-static AMD64Instr* mk_iMOVsd_RR ( HReg src, HReg dst )
-{
-   vassert(hregClass(src) == HRcInt64);
-   vassert(hregClass(dst) == HRcInt64);
-   return AMD64Instr_Alu64R(Aalu_MOV, AMD64RMI_Reg(src), dst);
-}
-
-
+/* Emits AMD64 code for a single NInstr |ni| into |ab|, possibly
+   adding relocation information into |rb| too.
+*/
 static
 void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
                         /*MOD*/RelocationBuffer* rb,
@@ -4298,78 +4103,15 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
       }
 
       case Nin_Call: {
-         /* The main difficulty here is to figure out the minimal set
-            of registers to save across the call.  As far as I can see, the
-            set is:
-
-            (1)   registers live after this NCode block  
-            (2)   + the Arg, Res and Scratch registers for this block
-            (3)   - Abi_Callee_Saved registers
-            (4)   - the Arg/Res/Scratch register(s) into which this call
-                    will place its results
-  
-            (1) because that's the set of regs that reg-alloc expects to
-                not be trashed by the NCode block
-            (2) because Arg/Res/Scratch regs can be used freely within the
-                NCode block, so we have to keep them alive
-            (3) because preserving Callee saved regs is obviously pointless
-            (4) because preserving the call's result reg(s) will result in
-                the restore sequence overwriting the result of the call
-
-            Figuring out (1) is tricky and is something that reg-alloc
-            needs to tell us.  I think it's safe to start with an
-            overestimate of (1) -- for example, all regs available to
-            reg-alloc -- and refine it later.
-         */
-         const RRegUniverse* univ = RRegSet__getUniverse(hregsLiveAfter);
-         const RRegSet* set_1 = hregsLiveAfter;
-
-         RRegSet* set_2 = RRegSet__new(univ);
-         { UInt i;
-           for (i = 0; i < nregMap->nRegsR; i++)
-              RRegSet__add(set_2, nregMap->regsR[i]);
-           for (i = 0; i < nregMap->nRegsA; i++)
-              RRegSet__add(set_2, nregMap->regsA[i]);
-           for (i = 0; i < nregMap->nRegsS; i++)
-              RRegSet__add(set_2, nregMap->regsS[i]);
-         }         
-
-         RRegSet* set_3 = RRegSet__new(univ);
-         // callee-saves: rbx rbp r12 r13 r14 r15
-         { HReg vec[6];
-            vec[0] = hregAMD64_RBX(); vec[1] = hregAMD64_RBP();
-            vec[2] = hregAMD64_R12(); vec[3] = hregAMD64_R13();
-            vec[4] = hregAMD64_R14(); vec[5] = hregAMD64_R15();
-            RRegSet__fromVec(set_3, vec, sizeof(vec)/sizeof(vec[0]));
-         }
-
-         RRegSet* set_4 = RRegSet__new(univ);
-         if (!isNRegINVALID(ni->Nin.Call.resHi))
-            RRegSet__add(set_4, mapNReg(nregMap, ni->Nin.Call.resHi));
-         if (!isNRegINVALID(ni->Nin.Call.resLo))
-            RRegSet__add(set_4, mapNReg(nregMap, ni->Nin.Call.resLo));
-
-         RRegSet* to_preserve = RRegSet__new(univ);
-         RRegSet__copy(to_preserve, set_1);
-         RRegSet__plus(to_preserve, set_2);
-         RRegSet__minus(to_preserve, set_3);
-         RRegSet__minus(to_preserve, set_4);
-
-         if (verbose) {
-            vex_printf("              # set1: ");
-            RRegSet__pp(set_1, ppHRegAMD64); vex_printf("\n");
-            vex_printf("              # set2: ");
-            RRegSet__pp(set_2, ppHRegAMD64); vex_printf("\n");
-            vex_printf("              # set3: ");
-            RRegSet__pp(set_3, ppHRegAMD64); vex_printf("\n");
-            vex_printf("              # set4: ");
-            RRegSet__pp(set_4, ppHRegAMD64); vex_printf("\n");
-            vex_printf("              # pres: ");
-            RRegSet__pp(to_preserve, ppHRegAMD64); vex_printf("\n");
-         }
+         RRegSet to_preserve;
+         calcRegistersToPreserveAroundNCodeCall(
+            &to_preserve,
+            hregsLiveAfter, getRRegsCalleeSaved_AMD64(), nregMap,
+            ni->Nin.Call.resHi, ni->Nin.Call.resLo
+         );
 
          /* Save live regs */
-         UInt n_to_preserve = RRegSet__card(to_preserve);
+         UInt n_to_preserve = RRegSet__card(&to_preserve);
          vassert(n_to_preserve < 25); /* stay sane */
 
          /* Figure out how much to move the stack, ensuring any alignment up
@@ -4382,7 +4124,7 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
          }
 
          RRegSetIterator* iter = RRegSetIterator__new();
-         RRegSetIterator__init(iter, to_preserve);
+         RRegSetIterator__init(iter, &to_preserve);
          UInt slotNo = 0;
          while (True) {
             HReg r = RRegSetIterator__next(iter);
@@ -4426,7 +4168,7 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
          }
 
          /* Restore live regs */
-         RRegSetIterator__init(iter, to_preserve);
+         RRegSetIterator__init(iter, &to_preserve);
          slotNo = 0;
          while (True) {
             HReg r = RRegSetIterator__next(iter);
@@ -4579,6 +4321,127 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
    /*NOTREACHED*/
 
 #  undef HI
+}
+
+
+/* Emits AMD64 code for the complete NCode block |hi| into |ab_hot|
+   and |ab_cold|, possibly adding relocation information to |rb| too.
+   This function can only handle NCode blocks.  All other AMD64
+   instructions are to be handled by emit_AMD64Instr.  This function
+   is required to generate <= 1024 bytes of code.  Returns True if OK,
+   False if not enough buffer space.
+*/
+Bool emit_AMD64NCodeBlock ( /*MOD*/AssemblyBuffer*   ab_hot,
+                            /*MOD*/AssemblyBuffer*   ab_cold,
+                            /*MOD*/RelocationBuffer* rb,
+                            const AMD64Instr*        hi,
+                            Bool mode64, VexEndness endness_host,
+                            Bool verbose )
+{
+   vassert(mode64 == True);
+   vassert(endness_host == VexEndnessLE);
+   vassert(hi->tag == Ain_NCode);
+
+   const AMD64InstrNCode* hi_details     = hi->Ain.NCode.details;
+   const NCodeTemplate*   tmpl           = hi_details->tmpl;
+   const RRegSet*         rregsLiveAfter = hi_details->rrLiveAfter;
+   const RRegUniverse*    univ           = RRegSet__getUniverse(rregsLiveAfter);
+
+   NRegMap nregMap;
+   nregMap.regsR  = hi_details->regsR;
+   nregMap.regsA  = hi_details->regsA;
+   nregMap.regsS  = hi_details->regsS;
+   nregMap.nRegsR = tmpl->nres;
+   nregMap.nRegsA = tmpl->narg;
+   nregMap.nRegsS = tmpl->nscr;
+
+   vassert(hregVecLen(nregMap.regsR) == nregMap.nRegsR);
+   vassert(hregVecLen(nregMap.regsA) == nregMap.nRegsA);
+   vassert(hregVecLen(nregMap.regsS) == nregMap.nRegsS);
+
+   if (AssemblyBuffer__getRemainingSize(ab_hot) < 1024)
+      return False;
+   if (AssemblyBuffer__getRemainingSize(ab_cold) < 1024)
+      return False;
+   if (RelocationBuffer__getRemainingSize(rb) < 128)
+      return False;
+
+   /* Count how many hot and cold instructions (NInstrs) the template
+      has, since we'll need to allocate temporary arrays to keep track
+      of the label offsets. */
+   UInt nHot, nCold;
+   for (nHot = 0; tmpl->hot[nHot]; nHot++)
+      ;
+   for (nCold = 0; tmpl->cold[nCold]; nCold++)
+      ;
+
+   /* Here are our two arrays for tracking the AssemblyBuffer offsets
+      of the NCode instructions. */
+   UInt i;
+   UInt offsetsHot[nHot];
+   UInt offsetsCold[nCold];
+   for (i = 0; i < nHot;  i++) offsetsHot[i]  = 0;
+   for (i = 0; i < nCold; i++) offsetsCold[i] = 0;
+
+   /* We'll be adding entries to the relocation buffer, |rb|, and will
+      need to adjust their |dst| fields after generation of the hot
+      and cold code.  Record therefore where we are in the buffer now,
+      so that we can iterate over the new entries later. */
+   UInt rb_first = RelocationBuffer__getNext(rb);
+
+   /* Generate the hot code */
+   for (i = 0; i < nHot; i++) {
+      offsetsHot[i] = AssemblyBuffer__getNext(ab_hot);
+      NLabel lbl = mkNLabel(Nlz_Hot, i);
+      emit_AMD64NInstr(ab_hot, rb, tmpl->hot[i], &nregMap,
+                       rregsLiveAfter, verbose, lbl);
+   }   
+
+   /* And the cold code */
+   for (i = 0; i < nCold; i++) {
+      offsetsCold[i] = AssemblyBuffer__getNext(ab_cold);
+      NLabel lbl = mkNLabel(Nlz_Cold, i);
+      emit_AMD64NInstr(ab_cold, rb, tmpl->cold[i], &nregMap,
+                       rregsLiveAfter, verbose, lbl);
+   }
+
+   /* Now visit the new relocation entries. */
+   UInt rb_last1 = RelocationBuffer__getNext(rb);
+
+   for (i = rb_first; i < rb_last1; i++) {
+      Relocation* reloc = &rb->buf[i];
+
+      /* Show the reloc before the label-to-offset transformation. */
+      if (verbose) {
+         vex_printf("   reloc:  ");
+         ppRelocation(reloc);
+         vex_printf("\n");
+      }
+
+      /* Transform the destination component of |reloc| so that it no
+         longer refers to a label but rather to an offset in the hot
+         or cold assembly buffer. */
+      vassert(!reloc->dst.isOffset);
+      reloc->dst.isOffset = True;
+
+      if (reloc->dst.zone == Nlz_Hot) {
+         vassert(reloc->dst.num < nHot);
+         reloc->dst.num = offsetsHot[reloc->dst.num];
+      } else {
+         vassert(reloc->dst.zone == Nlz_Cold);
+         vassert(reloc->dst.num < nCold);
+         reloc->dst.num = offsetsCold[reloc->dst.num];
+      }
+
+      /* Show the reloc after the label-to-offset transformation. */
+      if (verbose) {
+         vex_printf("   reloc:  ");
+         ppRelocation(reloc);
+         vex_printf("\n");
+      }
+   }
+
+   return True;
 }
 
 

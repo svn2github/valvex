@@ -1128,9 +1128,9 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
          if (UNLIKELY( AssemblyBuffer__getRemainingSize(&ab_hot) < 1024 )
              || UNLIKELY( AssemblyBuffer__getRemainingSize(&ab_cold) < 1024 ))
             goto outputBufferFull;
-         Bool ok = emit_AMD64NCode ( &ab_hot, &ab_cold, &rb, hi,
-                                     mode64, vta->archinfo_host.endness,
-                                     !!(vex_traceflags & VEX_TRACE_ASM));
+         Bool ok = emit_AMD64NCodeBlock ( &ab_hot, &ab_cold, &rb, hi,
+                                          mode64, vta->archinfo_host.endness,
+                                          !!(vex_traceflags & VEX_TRACE_ASM));
          if (!ok)
             goto outputBufferFull;
       }

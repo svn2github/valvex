@@ -830,6 +830,9 @@ extern AMD64Instr* AMD64Instr_NC_TestQ   ( HReg src, HReg dst );
 
 extern void ppAMD64Instr ( const AMD64Instr*, Bool );
 
+/* Handy helper, for generating integer reg-reg moves. */
+extern AMD64Instr* mk_iMOVsd_RR ( HReg src, HReg dst );
+
 /* Some functions that insulate the register allocator from details
    of the underlying instruction set. */
 extern void getRegUsage_AMD64Instr ( HRegUsage*, const AMD64Instr*, Bool );
@@ -839,12 +842,12 @@ extern Bool emit_AMD64Instr        ( /*MOD*/AssemblyBuffer*,
                                      const AMD64Instr*, Bool, VexEndness,
                                      const VexDispatcherAddresses* );
 
-extern Bool emit_AMD64NCode ( /*MOD*/AssemblyBuffer*   ab_hot,
-                              /*MOD*/AssemblyBuffer*   ab_cold,
-                              /*MOD*/RelocationBuffer* rb,
-                              const AMD64Instr*        hi,
-                              Bool mode64, VexEndness endness_host,
-                              Bool verbose );
+extern Bool emit_AMD64NCodeBlock ( /*MOD*/AssemblyBuffer*   ab_hot,
+                                   /*MOD*/AssemblyBuffer*   ab_cold,
+                                   /*MOD*/RelocationBuffer* rb,
+                                   const AMD64Instr*        hi,
+                                   Bool mode64, VexEndness endness_host,
+                                   Bool verbose );
 
 extern void genSpill_AMD64  ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                               HReg rreg, Bool spRel, Int offset, Bool );

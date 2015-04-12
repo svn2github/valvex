@@ -309,9 +309,9 @@ static Bool isZeroU32 ( IRExpr* e )
           && e->Iex.Const.con->Ico.U32 == 0;
 }
 
-/* Make a int reg-reg move. */
+/* Make an int reg-reg move. */
 
-static AMD64Instr* mk_iMOVsd_RR ( HReg src, HReg dst )
+/*notstatic*/ AMD64Instr* mk_iMOVsd_RR ( HReg src, HReg dst )
 {
    vassert(hregClass(src) == HRcInt64);
    vassert(hregClass(dst) == HRcInt64);

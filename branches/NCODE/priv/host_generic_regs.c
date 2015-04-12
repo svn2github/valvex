@@ -120,16 +120,6 @@ void RRegUniverse__check_is_sane ( const RRegUniverse* univ )
 /*--- Real register sets                                ---*/
 /*---------------------------------------------------------*/
 
-/* Represents sets of real registers.  |bits| is interpreted in the
-   context of |univ|.  That is, each bit index |i| in |bits|
-   corresponds to the register |univ->regs[i]|.  This relies
-   entirely on the fact that N_RREGUNIVERSE_REGS <= 64.
-*/
-struct _RRegSet {
-   ULong               bits;
-   const RRegUniverse* univ;
-};
-
 STATIC_ASSERT(N_RREGUNIVERSE_REGS <= 8 * sizeof(ULong));
 
 /* Print a register set, using the arch-specific register printing
@@ -153,13 +143,19 @@ void RRegSet__pp ( const RRegSet* set, void (*regPrinter)(HReg) )
    vex_printf("}");
 }
 
-/* Create a new, empty, set. */
+/* Initialise an RRegSet, making it empty. */
+inline void RRegSet__init ( /*OUT*/RRegSet* set, const RRegUniverse* univ )
+{
+   set->bits = 0;
+   set->univ = univ;
+}
+
+/* Create a new, empty, set, in the normal (transient) heap. */
 RRegSet* RRegSet__new ( const RRegUniverse* univ )
 {
    vassert(univ);
    RRegSet* set = LibVEX_Alloc_inline(sizeof(RRegSet));
-   set->bits = 0;
-   set->univ = univ;
+   RRegSet__init(set, univ);
    return set;
 }
 
@@ -174,6 +170,7 @@ const RRegUniverse* RRegSet__getUniverse ( const RRegSet* set )
    duplicates. */
 void RRegSet__fromVec ( /*MOD*/RRegSet* dst, const HReg* vec, UInt nVec )
 {
+   dst->bits = 0;
    for (UInt i = 0; i < nVec; i++) {
       HReg r = vec[i];
       vassert(!hregIsInvalid(r) && !hregIsVirtual(r));
@@ -227,6 +224,22 @@ void RRegSet__minus ( /*MOD*/RRegSet* dst, const RRegSet* regs )
 UInt RRegSet__card ( const RRegSet* set )
 {
    return __builtin_popcountll(set->bits);
+}
+
+/* Remove non-allocatable registers from this set.  Because the set
+   carries its register universe, we can consult that to find the
+   non-allocatable registers, so no other parameters are needed. */
+void RRegSet__deleteNonAllocatable ( /*MOD*/RRegSet* set )
+{
+   const RRegUniverse* univ = set->univ;
+   UInt allocable = univ->allocable;
+   if (UNLIKELY(allocable == N_RREGUNIVERSE_REGS)) {
+      return;
+      /* otherwise we'd get an out-of-range shift below */
+   }
+   vassert(allocable > 0 && allocable < N_RREGUNIVERSE_REGS);
+   ULong mask = (1ULL << allocable) - 1;
+   set->bits &= mask;
 }
 
 
@@ -398,6 +411,20 @@ Bool HRegUsage__contains ( const HRegUsage* tab, HReg reg )
    /*NOTREACHED*/
 }
 
+void addHRegUse_from_RRegSet ( HRegUsage* tab,
+                               HRegMode mode, const RRegSet* set )
+{
+   STATIC_ASSERT(sizeof(tab->rRead) == sizeof(tab->rWritten));
+   STATIC_ASSERT(sizeof(tab->rRead) == sizeof(set->bits));
+   switch (mode) {
+      case HRmRead:   tab->rRead    |= set->bits; break;
+      case HRmWrite:  tab->rWritten |= set->bits; break;
+      case HRmModify: tab->rRead    |= set->bits;
+                      tab->rWritten |= set->bits; break;
+      default: vassert(0);
+   }
+}
+
 
 /*---------------------------------------------------------*/
 /*--- Indicating register remappings (for reg-alloc)    ---*/
@@ -528,6 +555,128 @@ void ppRelocation ( Relocation* rl )
    vex_printf(" bits[%u..%u]) refers-to (", rl->bitNoMax, rl->bitNoMin);
    ppRelocDst(rl->dst);
    vex_printf(") bias %d rshift %u", rl->bias, (UInt)rl->rshift);
+}
+
+
+/*---------------------------------------------------------*/
+/*--- NCode generation helpers                          ---*/
+/*---------------------------------------------------------*/
+
+/* Find the length of a vector of HRegs that is terminated by
+   an HReg_INVALID. */
+UInt hregVecLen ( const HReg* vec )
+{
+   UInt i;
+   for (i = 0; !hregIsInvalid(vec[i]); i++)
+      ;
+   return i;
+}
+
+
+/* Find the real (hard) register for |r| by looking up in |map|. */
+HReg mapNReg ( const NRegMap* map, NReg r )
+{
+   UInt limit = 0;
+   const HReg* arr = NULL;
+   switch (r.role) {
+      case Nrr_Result:   limit = map->nRegsR; arr = map->regsR; break;
+      case Nrr_Argument: limit = map->nRegsA; arr = map->regsA; break;
+      case Nrr_Scratch:  limit = map->nRegsS; arr = map->regsS; break;
+      default: vpanic("mapNReg: invalid reg role");
+   }
+   vassert(r.num < limit);
+   return arr[r.num];
+}
+
+
+/* Compute the minimal set of registers to preserve around calls
+   embedded within NCode blocks. */
+void calcRegistersToPreserveAroundNCodeCall (
+        /*OUT*/RRegSet* result,
+        const RRegSet*  hregsLiveAfterTheNCodeBlock,
+        const RRegSet*  abiCallerSavedRegs,
+        const NRegMap*  nregMap,
+        NReg nregResHi,
+        NReg nregResLo
+     )
+{
+   /* This function deals with one of the main difficulties of NCode
+      templates, which is that of figuring out the minimal set of
+      registers to save across calls embedded inside NCode blocks.  As
+      far as I can see, the set is:
+
+      (1)   registers live after the NCode block  
+      (2)   + the Arg, Res and Scratch registers for the block
+      (3)   - Abi_Callee_Saved registers
+      (4)   - the Arg/Res/Scratch register(s) into which the call
+              will place its results
+  
+      (1) because that's the set of regs that reg-alloc expects to
+          not be trashed by the NCode block
+      (2) because Arg/Res/Scratch regs can be used freely within the
+          NCode block, so we have to keep them alive
+      (3) because preserving Callee saved regs is obviously pointless
+      (4) because preserving the call's result reg(s) will result in
+          the restore sequence overwriting the result of the call
+
+      (2) (3) (4) are either constants or something we can find from
+      inspection of the relevant NInstr (call) alone.  (1) is
+      something that depends on instructions after the NCode block
+      and so is something that the register allocator has to tell us.
+
+      Another detail is that we remove from the set, all registers not
+      available to the register allocator.  That is, we save across
+      the call, only registers available to the allocator.  That
+      assumes that all fixed-use or otherwise-not-allocatable
+      registers, that we care about, are callee-saved.  AFAIK the only
+      important register is the baseblock register, and that is indeed
+      callee-saved on all targets.
+   */
+   const RRegUniverse* univ 
+      = RRegSet__getUniverse(hregsLiveAfterTheNCodeBlock);
+
+   const RRegSet* set_1 = hregsLiveAfterTheNCodeBlock;
+
+   RRegSet set_2;
+   RRegSet__init(&set_2, univ);
+   for (UInt i = 0; i < nregMap->nRegsR; i++)
+      RRegSet__add(&set_2, nregMap->regsR[i]);
+   for (UInt i = 0; i < nregMap->nRegsA; i++)
+      RRegSet__add(&set_2, nregMap->regsA[i]);
+   for (UInt i = 0; i < nregMap->nRegsS; i++)
+      RRegSet__add(&set_2, nregMap->regsS[i]);
+
+   const RRegSet* set_3 = abiCallerSavedRegs;
+   vassert(univ == RRegSet__getUniverse(set_3));
+
+   RRegSet set_4;
+   RRegSet__init(&set_4, univ);
+   if (!isNRegINVALID(nregResHi))
+      RRegSet__add(&set_4, mapNReg(nregMap, nregResHi));
+   if (!isNRegINVALID(nregResLo))
+      RRegSet__add(&set_4, mapNReg(nregMap, nregResLo));
+
+   RRegSet__init(result, univ);
+   RRegSet__copy(result, set_1);
+   RRegSet__plus(result, &set_2);
+   RRegSet__minus(result, set_3);
+   RRegSet__minus(result, &set_4);
+
+   if (0) {
+      vex_printf("              # set1: ");
+      RRegSet__pp(set_1, ppHReg); vex_printf("\n");
+      vex_printf("              # set2: ");
+      RRegSet__pp(&set_2, ppHReg); vex_printf("\n");
+      vex_printf("              # set3: ");
+      RRegSet__pp(set_3, ppHReg); vex_printf("\n");
+      vex_printf("              # set4: ");
+      RRegSet__pp(&set_4, ppHReg); vex_printf("\n");
+      vex_printf("              # pres: ");
+      RRegSet__pp(result, ppHReg); vex_printf("\n");
+   }
+
+   /* Remove any non allocatable registers (see big comment above) */
+   RRegSet__deleteNonAllocatable(result);
 }
 
 
