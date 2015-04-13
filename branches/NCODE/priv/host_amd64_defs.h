@@ -358,7 +358,7 @@ typedef
       Ain_Imm64,       /* Generate 64-bit literal to register */
       Ain_Alu64R,      /* 64-bit mov/arith/logical, dst=REG */
       Ain_Alu64M,      /* 64-bit mov/arith/logical, dst=MEM */
-      Ain_Sh64,        /* 64-bit shift/rotate, dst=REG or MEM */
+      Ain_Sh64,        /* 64-bit shift, dst=REG, by imm or %cl */
       Ain_Test64,      /* 64-bit test (AND, set flags, discard result) */
       Ain_Unary64,     /* 64-bit not and neg */
       Ain_Lea64,       /* 64-bit compute EA into a reg */

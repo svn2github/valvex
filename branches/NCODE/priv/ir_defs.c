@@ -77,6 +77,7 @@ static const HChar* nameNShift ( NShift nsh ) {
 static const HChar* nameNAlu ( NAlu nal ) {
    switch (nal) {
       case Nalu_AND: return "and";
+      case Nalu_ADD: return "add";
       default: return "nameNAlu???";
    }
 }
@@ -182,12 +183,28 @@ void ppNInstr ( const NInstr* ni )
          ppNReg(ni->Nin.ShiftWri.srcL);
          vex_printf(", #%u", (UInt)ni->Nin.ShiftWri.amt);
          break;
+      case Nin_ShiftWrr:
+         vex_printf("%s.w  ", nameNShift(ni->Nin.ShiftWrr.how));
+         ppNReg(ni->Nin.ShiftWrr.dst);
+         vex_printf(", ");
+         ppNReg(ni->Nin.ShiftWrr.srcL);
+         vex_printf(", ");
+         ppNReg(ni->Nin.ShiftWrr.amt);
+         break;
       case Nin_AluWri:
          vex_printf("%s.w  ", nameNAlu(ni->Nin.AluWri.how));
          ppNReg(ni->Nin.AluWri.dst);
          vex_printf(", ");
          ppNReg(ni->Nin.AluWri.srcL);
          vex_printf(", #0x%llx", (ULong)ni->Nin.AluWri.srcR);
+         break;
+      case Nin_AluWrr:
+         vex_printf("%s.w  ", nameNAlu(ni->Nin.AluWrr.how));
+         ppNReg(ni->Nin.AluWrr.dst);
+         vex_printf(", ");
+         ppNReg(ni->Nin.AluWrr.srcL);
+         vex_printf(", ");
+         ppNReg(ni->Nin.AluWrr.srcR);
          break;
       case Nin_SetFlagsWri:
          vex_printf("%s.w  ", nameNSetFlags(ni->Nin.SetFlagsWri.how));
@@ -2064,6 +2081,17 @@ NInstr* NInstr_ShiftWri ( NAlloc na,
    in->Nin.ShiftWri.amt  = amt;
    return in;
 }
+NInstr* NInstr_ShiftWrr ( NAlloc na,
+                          NShift how, NReg dst, NReg srcL, NReg amt )
+{
+   NInstr* in = na(sizeof(NInstr));
+   in->tag               = Nin_ShiftWrr;
+   in->Nin.ShiftWrr.how  = how;
+   in->Nin.ShiftWrr.dst  = dst;
+   in->Nin.ShiftWrr.srcL = srcL;
+   in->Nin.ShiftWrr.amt  = amt;
+   return in;
+}
 NInstr* NInstr_AluWri ( NAlloc na, NAlu how, NReg dst, NReg srcL, HWord srcR )
 {
    NInstr* in = na(sizeof(NInstr));
@@ -2072,6 +2100,16 @@ NInstr* NInstr_AluWri ( NAlloc na, NAlu how, NReg dst, NReg srcL, HWord srcR )
    in->Nin.AluWri.dst  = dst;
    in->Nin.AluWri.srcL = srcL;
    in->Nin.AluWri.srcR = srcR;
+   return in;
+}
+NInstr* NInstr_AluWrr ( NAlloc na, NAlu how, NReg dst, NReg srcL, NReg srcR )
+{
+   NInstr* in = na(sizeof(NInstr));
+   in->tag             = Nin_AluWrr;
+   in->Nin.AluWrr.how  = how;
+   in->Nin.AluWrr.dst  = dst;
+   in->Nin.AluWrr.srcL = srcL;
+   in->Nin.AluWrr.srcR = srcR;
    return in;
 }
 NInstr* NInstr_SetFlagsWri ( NAlloc na, NSetFlags how, NReg srcL, HWord srcR )

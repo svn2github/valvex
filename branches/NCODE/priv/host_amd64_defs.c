@@ -4218,21 +4218,67 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
          break;
       }
 
+      case Nin_ShiftWrr: {
+         NShift how = ni->Nin.ShiftWrr.how;
+         HReg   amt = mapNReg(nregMap, ni->Nin.ShiftWrr.amt);
+         HReg   src = mapNReg(nregMap, ni->Nin.ShiftWrr.srcL);
+         HReg   dst = mapNReg(nregMap, ni->Nin.ShiftWrr.dst);
+
+         AMD64ShiftOp shOp = Ash_INVALID;
+         switch (how) {
+            case Nsh_SHR: shOp = Ash_SHR; break;
+            default: break;
+         }
+         vassert(shOp != Ash_INVALID);
+
+         if (!sameHReg(src, dst)) {
+            HI( mk_iMOVsd_RR(src, dst) );
+         }
+         /* Now, we have the shift amount in register |amt|.  Problem
+            is that it needs to be in %rcx, but we don't know whether
+            or not that is live.  Rather than do this nicely, we can
+            take advantage of the fact that r11 is a guaranteed
+            available scratch temp, and temporarily store rcx in it.
+            Note that rcx could be live even through it isn't
+            allocatable, since the insn selector uses it to put
+            variable shift amounts in.  So we can't safely trash it
+            here. */
+         HI( mk_iMOVsd_RR(hregAMD64_RCX(), hregAMD64_R11()) ); // save rcx
+         HI( mk_iMOVsd_RR(amt,             hregAMD64_RCX()) ); // amt->rcx
+         HI( AMD64Instr_Sh64(shOp, 0/*meaning %cl*/, dst) );
+         HI( mk_iMOVsd_RR(hregAMD64_R11(), hregAMD64_RCX()) ); // restore rcx
+         break;
+      }
+
       case Nin_AluWri: {
          NAlu  how   = ni->Nin.AluWri.how;
          HReg  dstR  = mapNReg(nregMap, ni->Nin.AluWri.dst);
          HReg  srcLR = mapNReg(nregMap, ni->Nin.AluWri.srcL);
          HWord imm   = ni->Nin.AluWri.srcR;
-         // Verified correct, but currently unused
-         //if (how == Nalu_AND && fitsIn32Bits((ULong)imm)) {
-         //   if (!sameHReg(srcLR, dstR)) {
-         //      HI( mk_iMOVsd_RR(srcLR, dstR) );
-         //   }
-         //   HI( AMD64Instr_Alu64R(Aalu_AND, AMD64RMI_Imm(imm), dstR) );
-         //   break;
-         //}
          if (how == Nalu_AND && imm == 0xFFFFULL) {
             HI( AMD64Instr_MovxWQ(False/*!syned*/, srcLR, dstR) );
+            break;
+         }
+         if (how == Nalu_AND && fitsIn32Bits((ULong)imm)) {
+            if (!sameHReg(srcLR, dstR)) {
+               HI( mk_iMOVsd_RR(srcLR, dstR) );
+            }
+            HI( AMD64Instr_Alu64R(Aalu_AND, AMD64RMI_Imm(imm), dstR) );
+            break;
+         }
+         goto unhandled;
+      }
+
+      case Nin_AluWrr: {
+         NAlu  how   = ni->Nin.AluWrr.how;
+         HReg  dstR  = mapNReg(nregMap, ni->Nin.AluWrr.dst);
+         HReg  srcLR = mapNReg(nregMap, ni->Nin.AluWrr.srcL);
+         HReg  srcRR = mapNReg(nregMap, ni->Nin.AluWrr.srcR);
+         if (how == Nalu_ADD) {
+            if (!sameHReg(srcLR, dstR)) {
+               HI( mk_iMOVsd_RR(srcLR, dstR) );
+            }
+            HI( AMD64Instr_Alu64R(Aalu_ADD, AMD64RMI_Reg(srcRR), dstR) );
             break;
          }
          goto unhandled;
@@ -4345,7 +4391,6 @@ Bool emit_AMD64NCodeBlock ( /*MOD*/AssemblyBuffer*   ab_hot,
    const AMD64InstrNCode* hi_details     = hi->Ain.NCode.details;
    const NCodeTemplate*   tmpl           = hi_details->tmpl;
    const RRegSet*         rregsLiveAfter = hi_details->rrLiveAfter;
-   const RRegUniverse*    univ           = RRegSet__getUniverse(rregsLiveAfter);
 
    NRegMap nregMap;
    nregMap.regsR  = hi_details->regsR;

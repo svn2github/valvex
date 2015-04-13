@@ -2673,7 +2673,8 @@ typedef
 
 typedef
    enum {
-      Nalu_AND=0x1D30
+      Nalu_AND=0x1D30,
+      Nalu_ADD
    }
    NAlu;
 
@@ -2766,7 +2767,9 @@ typedef
       Nin_Call,
       Nin_ImmW,
       Nin_ShiftWri,
+      Nin_ShiftWrr,
       Nin_AluWri,
+      Nin_AluWrr,
       Nin_SetFlagsWri,
       Nin_MovW,
       Nin_LoadU,
@@ -2802,11 +2805,23 @@ typedef
            UInt   amt;  /* 1 .. host-word-size-1 only */
         } ShiftWri;
         struct {
+           NShift how;
+           NReg   dst;
+           NReg   srcL;
+           NReg   amt;  /* 0 .. host-word-size-1 only */
+        } ShiftWrr;
+        struct {
            NAlu  how;
            NReg  dst;
            NReg  srcL;
            HWord srcR;
         } AluWri;
+        struct {
+           NAlu  how;
+           NReg  dst;
+           NReg  srcL;
+           NReg  srcR;
+        } AluWrr;
         struct {
            NSetFlags how;
            NReg      srcL;
@@ -2839,8 +2854,12 @@ extern NInstr* NInstr_Call        ( NAlloc na,
 extern NInstr* NInstr_ImmW        ( NAlloc na, NReg dst, HWord imm );
 extern NInstr* NInstr_ShiftWri    ( NAlloc na,
                                     NShift how, NReg dst, NReg srcL, UInt amt );
+extern NInstr* NInstr_ShiftWrr    ( NAlloc na,
+                                    NShift how, NReg dst, NReg srcL, NReg amt );
 extern NInstr* NInstr_AluWri      ( NAlloc na,
                                     NAlu how, NReg dst, NReg srcL, HWord srcR );
+extern NInstr* NInstr_AluWrr      ( NAlloc na,
+                                    NAlu how, NReg dst, NReg srcL, NReg srcR );
 extern NInstr* NInstr_SetFlagsWri ( NAlloc na,
                                     NSetFlags how, NReg srcL, HWord srcR );
 extern NInstr* NInstr_MovW        ( NAlloc na, NReg dst, NReg src );
