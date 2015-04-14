@@ -537,6 +537,16 @@ static inline UChar* AssemblyBuffer__getCursor ( const AssemblyBuffer* abuf )
    return &abuf->buf[abuf->bufUsed];
 }
 
+static inline UInt* AssemblyBuffer__getCursor_4aligned ( const
+                                                         AssemblyBuffer* abuf )
+{
+   UChar* addr = &abuf->buf[abuf->bufUsed];
+   vassert(IS_4_ALIGNED(addr));
+   /* Cast via HWord so that gcc on arm32 doesn't complain about the
+      increase of alignment requirements. */
+   return (UInt*)(HWord)addr;
+}
+
 static inline UInt AssemblyBuffer__getNext ( const AssemblyBuffer* abuf )
 {
    return abuf->bufUsed;

@@ -2554,12 +2554,13 @@ Bool isMove_ARMInstr ( const ARMInstr* i, HReg* src, HReg* dst )
    condition codes. */
 
 void genSpill_ARM ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
-                    HReg rreg, Int offsetB, Bool mode64 )
+                    HReg rreg, Bool spRel, Int offsetB, Bool mode64 )
 {
    HRegClass rclass;
    vassert(offsetB >= 0);
    vassert(!hregIsVirtual(rreg));
    vassert(mode64 == False);
+   vassert(!spRel);
    *i1 = *i2 = NULL;
    rclass = hregClass(rreg);
    switch (rclass) {
@@ -2609,12 +2610,13 @@ void genSpill_ARM ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
 }
 
 void genReload_ARM ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
-                     HReg rreg, Int offsetB, Bool mode64 )
+                     HReg rreg, Bool spRel, Int offsetB, Bool mode64 )
 {
    HRegClass rclass;
    vassert(offsetB >= 0);
    vassert(!hregIsVirtual(rreg));
    vassert(mode64 == False);
+   vassert(!spRel);
    *i1 = *i2 = NULL;
    rclass = hregClass(rreg);
    switch (rclass) {
@@ -2663,6 +2665,17 @@ void genReload_ARM ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
    }
 }
 
+
+/* --------- The arm32 assembler (bleh.) --------- */
+
+#define PUT(_ab, _word32)                                \
+   do { const UInt _off      = (_ab)->bufUsed;           \
+        (_ab)->buf[_off + 0] = ((_word32) >> 0)  & 0xFF; \
+        (_ab)->buf[_off + 1] = ((_word32) >> 8)  & 0xFF; \
+        (_ab)->buf[_off + 2] = ((_word32) >> 16) & 0xFF; \
+        (_ab)->buf[_off + 3] = ((_word32) >> 24) & 0xFF; \
+        (_ab)->bufUsed       = _off + 4;                 \
+   } while (0)
 
 /* Emit an instruction into buf and return the number of bytes used.
    Note that buf is not the insn's final place, and therefore it is
@@ -2796,7 +2809,7 @@ static UInt skeletal_RI5 ( ARMRI5* ri )
 
 /* Get an immediate into a register, using only that 
    register.  (very lame..) */
-static UInt* imm32_to_ireg ( UInt* p, Int rD, UInt imm32 )
+static void imm32_to_ireg ( /*MOD*/AssemblyBuffer* ab, Int rD, UInt imm32 )
 {
    UInt instr;
    vassert(rD >= 0 && rD <= 14); // r15 not good to mess with!
@@ -2805,15 +2818,15 @@ static UInt* imm32_to_ireg ( UInt* p, Int rD, UInt imm32 )
       /* mov with a immediate shifter operand of (0, imm32) (??) */
       instr = XXXXXX__(X1110,X0011,X1010,X0000,rD,X0000);
       instr |= imm32;
-      *p++ = instr;
+      PUT(ab, instr);
    } else {
       // this is very bad; causes Dcache pollution
       // ldr  rD, [pc]
       instr = XXXXX___(X1110,X0101,X1001,X1111,rD);
-      *p++ = instr;
+      PUT(ab, instr);
       // b .+8
       instr = 0xEA000000;
-      *p++ = instr;
+      PUT(ab, instr);
       // .word imm32
       *p++ = imm32;
    }
@@ -2826,12 +2839,12 @@ static UInt* imm32_to_ireg ( UInt* p, Int rD, UInt imm32 )
       instr = XXXXXXXX(0xE, 0x3, 0x0, (lo16 >> 12) & 0xF, rD,
                        (lo16 >> 8) & 0xF, (lo16 >> 4) & 0xF,
                        lo16 & 0xF);
-      *p++ = instr;
+      PUT(ab, instr);
       if (hi16 != 0) {
          instr = XXXXXXXX(0xE, 0x3, 0x4, (hi16 >> 12) & 0xF, rD,
                           (hi16 >> 8) & 0xF, (hi16 >> 4) & 0xF,
                           hi16 & 0xF);
-         *p++ = instr;
+         PUT(ab, instr);
       }
    } else {
       UInt imm, rot;
@@ -2841,7 +2854,7 @@ static UInt* imm32_to_ireg ( UInt* p, Int rD, UInt imm32 )
          imm = imm32 & 0xFF;
          rot = 0;
          instr = XXXXXXXX(0xE, 0x3, op, rN, rD, rot, imm >> 4, imm & 0xF);
-         *p++ = instr;
+         PUT(ab, instr);
          op = X1000;
          rN = rD;
       }
@@ -2849,7 +2862,7 @@ static UInt* imm32_to_ireg ( UInt* p, Int rD, UInt imm32 )
          imm = (imm32 >> 24) & 0xFF;
          rot = 4;
          instr = XXXXXXXX(0xE, 0x3, op, rN, rD, rot, imm >> 4, imm & 0xF);
-         *p++ = instr;
+         PUT(ab, instr);
          op = X1000;
          rN = rD;
       }
@@ -2857,7 +2870,7 @@ static UInt* imm32_to_ireg ( UInt* p, Int rD, UInt imm32 )
          imm = (imm32 >> 16) & 0xFF;
          rot = 8;
          instr = XXXXXXXX(0xE, 0x3, op, rN, rD, rot, imm >> 4, imm & 0xF);
-         *p++ = instr;
+         PUT(ab, instr);
          op = X1000;
          rN = rD;
       }
@@ -2865,20 +2878,20 @@ static UInt* imm32_to_ireg ( UInt* p, Int rD, UInt imm32 )
          imm = (imm32 >> 8) & 0xFF;
          rot = 12;
          instr = XXXXXXXX(0xE, 0x3, op, rN, rD, rot, imm >> 4, imm & 0xF);
-         *p++ = instr;
+         PUT(ab, instr);
          op = X1000;
          rN = rD;
       }
    }
 #endif
-   return p;
 }
 
 /* Get an immediate into a register, using only that register, and
    generating exactly 2 instructions, regardless of the value of the
    immediate. This is used when generating sections of code that need
    to be patched later, so as to guarantee a specific size. */
-static UInt* imm32_to_ireg_EXACTLY2 ( UInt* p, Int rD, UInt imm32 )
+static void imm32_to_ireg_EXACTLY2 ( /*MOD*/AssemblyBuffer* ab,
+                                     Int rD, UInt imm32 )
 {
    if (VEX_ARM_ARCHLEVEL(arm_hwcaps) > 6) {
       /* Generate movw rD, #low16 ;  movt rD, #high16. */
@@ -2888,15 +2901,14 @@ static UInt* imm32_to_ireg_EXACTLY2 ( UInt* p, Int rD, UInt imm32 )
       instr = XXXXXXXX(0xE, 0x3, 0x0, (lo16 >> 12) & 0xF, rD,
                        (lo16 >> 8) & 0xF, (lo16 >> 4) & 0xF,
                        lo16 & 0xF);
-      *p++ = instr;
+      PUT(ab, instr);
       instr = XXXXXXXX(0xE, 0x3, 0x4, (hi16 >> 12) & 0xF, rD,
                        (hi16 >> 8) & 0xF, (hi16 >> 4) & 0xF,
                        hi16 & 0xF);
-      *p++ = instr;
+      PUT(ab, instr);
    } else {
       vassert(0); /* lose */
    }
-   return p;
 }
 
 /* Check whether p points at a 2-insn sequence cooked up by
@@ -2921,8 +2933,8 @@ static Bool is_imm32_to_ireg_EXACTLY2 ( UInt* p, Int rD, UInt imm32 )
 }
 
 
-static UInt* do_load_or_store32 ( UInt* p,
-                                  Bool isLoad, UInt rD, ARMAMode1* am )
+static void do_load_or_store32 ( /*MOD*/AssemblyBuffer* ab,
+                                 Bool isLoad, UInt rD, ARMAMode1* am )
 {
    vassert(rD <= 12);
    vassert(am->tag == ARMam1_RI); // RR case is not handled
@@ -2942,29 +2954,26 @@ static UInt* do_load_or_store32 ( UInt* p,
                     iregEnc(am->ARMam1.RI.reg),
                     rD);
    instr |= simm12;
-   *p++ = instr;
-   return p;
+   PUT(ab, instr);
 }
 
 
-/* Emit an instruction into buf and return the number of bytes used.
-   Note that buf is not the insn's final place, and therefore it is
-   imperative to emit position-independent code.  If the emitted
-   instruction was a profiler inc, set *is_profInc to True, else
-   leave it unchanged. */
+/* Emit an instruction into |ab|.  Note that |ab->buf| is not the
+   insn's final place, and therefore it is imperative to emit
+   position-independent code.  If the emitted instruction was a
+   profiler inc, return True, else return False.  This function must
+   also guarantee to generate 256 or fewer bytes for each instr, so
+   as to facilitate range checking in the caller. */
 
-Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
-                    UChar* buf, Int nbuf, const ARMInstr* i, 
-                    Bool mode64, VexEndness endness_host,
-                    const void* disp_cp_chain_me_to_slowEP,
-                    const void* disp_cp_chain_me_to_fastEP,
-                    const void* disp_cp_xindir,
-                    const void* disp_cp_xassisted )
+Bool emit_ARMInstr ( /*MOD*/AssemblyBuffer* ab,
+                     const ARMInstr* i, 
+                     Bool mode64, VexEndness endness_host,
+                     const VexDispatcherAddresses* vda )
 {
-   UInt* p = (UInt*)buf;
-   vassert(nbuf >= 32);
+   Bool   is_profInc = False;
+   UChar* initialCursor = AssemblyBuffer__getCursor(ab);
    vassert(mode64 == False);
-   vassert(0 == (((HWord)buf) & 3));
+   vassert(IS_4_ALIGNED(initialCursor));
 
    switch (i->tag) {
       case ARMin_Alu: {
@@ -2992,7 +3001,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
              || i->ARMin.Alu.op == ARMalu_SUBS) {
             instr |= 1<<20;  /* set the S bit */
          }
-         *p++ = instr;
+         PUT(ab, instr);
          goto done;
       }
       case ARMin_Shift: {
@@ -3009,7 +3018,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          instr = skeletal_RI5(argR);
          instr |= XXXXX__X(X1110,X0001,X1010,X0000,rD, /* _ _ */ rM);
          instr |= (subopc & 3) << 5;
-         *p++ = instr;
+         PUT(ab, instr);
          goto done;
       }
       case ARMin_Unary: {
@@ -3020,18 +3029,18 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             case ARMun_CLZ:
                instr = XXXXXXXX(X1110,X0001,X0110,X1111,
                                 rDst,X1111,X0001,rSrc);
-               *p++ = instr;
+               PUT(ab, instr);
                goto done;
             case ARMun_NEG: /* RSB rD,rS,#0 */
                instr = XXXXX___(X1110,0x2,0x6,rSrc,rDst);
-               *p++ = instr;
+               PUT(ab, instr);
                goto done;
             case ARMun_NOT: {
                UInt subopc = X1111; /* MVN */
                instr = rSrc;
                instr |= XXXXX___(X1110, (1 & (subopc >> 3)),
                                  (subopc << 1) & 0xF, 0, rDst);
-               *p++ = instr;
+               PUT(ab, instr);
                goto done;
             }
             default:
@@ -3046,7 +3055,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          instr |= XXXXX___(X1110, (1 & (subopc >> 3)),
                            ((subopc << 1) & 0xF) | 1,
                            iregEnc(i->ARMin.CmpOrTst.argL), SBZ );
-         *p++ = instr;
+         PUT(ab, instr);
          goto done;
       }
       case ARMin_Mov: {
@@ -3056,12 +3065,12 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          instr |= XXXXX___(X1110, (1 & (subopc >> 3)),
                            (subopc << 1) & 0xF, SBZ,
                            iregEnc(i->ARMin.Mov.dst));
-         *p++ = instr;
+         PUT(ab, instr);
          goto done;
       }
       case ARMin_Imm32: {
-         p = imm32_to_ireg( (UInt*)p, iregEnc(i->ARMin.Imm32.dst),
-                                      i->ARMin.Imm32.imm32 );
+         imm32_to_ireg( ab, iregEnc(i->ARMin.Imm32.dst),
+                            i->ARMin.Imm32.imm32 );
          goto done;
       }
       case ARMin_LdSt32:
@@ -3099,7 +3108,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
                              iregEnc(am->ARMam1.RI.reg),
                              iregEnc(rD));
             instr |= simm12;
-            *p++ = instr;
+            PUT(ab, instr);
             goto done;
          } else {
             // RR case
@@ -3132,21 +3141,21 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
                // strh
                instr = XXXXXXXX(cc,X0001, BITS4(bP,1,0,0), iregEnc(rN),
                                 iregEnc(rD), imm8hi, X1011, imm8lo);
-               *p++ = instr;
+               PUT(ab, instr);
                goto done;
             }
             else if (bL == 1 && bS == 0) {
                // ldrh
                instr = XXXXXXXX(cc,X0001, BITS4(bP,1,0,1), iregEnc(rN),
                                 iregEnc(rD), imm8hi, X1011, imm8lo);
-               *p++ = instr;
+               PUT(ab, instr);
                goto done;
             }
             else if (bL == 1 && bS == 1) {
                // ldrsh
                instr = XXXXXXXX(cc,X0001, BITS4(bP,1,0,1), iregEnc(rN),
                                 iregEnc(rD), imm8hi, X1111, imm8lo);
-               *p++ = instr;
+               PUT(ab, instr);
                goto done;
             }
             else vassert(0); // ill-constructed insn
@@ -3177,7 +3186,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             // ldrsb
             instr = XXXXXXXX(cc,X0001, BITS4(bP,1,0,1), iregEnc(rN),
                              iregEnc(rD), imm8hi, X1101, imm8lo);
-            *p++ = instr;
+            PUT(ab, instr);
             goto done;
          } else {
             // RR case
@@ -3191,8 +3200,8 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          /* We're generating chain-me requests here, so we need to be
             sure this is actually allowed -- no-redir translations
             can't use chain-me's.  Hence: */
-         vassert(disp_cp_chain_me_to_slowEP != NULL);
-         vassert(disp_cp_chain_me_to_fastEP != NULL);
+         vassert(vda->disp_cp_chain_me_to_slowEP != NULL);
+         vassert(vda->disp_cp_chain_me_to_fastEP != NULL);
 
          /* Use ptmp for backpatching conditional jumps. */
          UInt* ptmp = NULL;
@@ -3202,37 +3211,37 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             it that we will shortly fill in. */
          if (i->ARMin.XDirect.cond != ARMcc_AL) {
             vassert(i->ARMin.XDirect.cond != ARMcc_NV);
-            ptmp = p;
-            *p++ = 0;
+            ptmp = AssemblyBuffer__getCursor_4aligned(ab);
+            PUT(ab, 0);
          }
 
          /* Update the guest R15T. */
          /* movw r12, lo16(dstGA) */
          /* movt r12, hi16(dstGA) */
          /* str r12, amR15T */
-         p = imm32_to_ireg(p, /*r*/12, i->ARMin.XDirect.dstGA);
-         p = do_load_or_store32(p, False/*!isLoad*/,
-                                /*r*/12, i->ARMin.XDirect.amR15T);
+         imm32_to_ireg(ab, /*r*/12, i->ARMin.XDirect.dstGA);
+         do_load_or_store32(ab, False/*!isLoad*/,
+                            /*r*/12, i->ARMin.XDirect.amR15T);
 
          /* --- FIRST PATCHABLE BYTE follows --- */
-         /* VG_(disp_cp_chain_me_to_{slowEP,fastEP}) (where we're
+         /* VG_(vda->disp_cp_chain_me_to_{slowEP,fastEP}) (where we're
             calling to) backs up the return address, so as to find the
             address of the first patchable byte.  So: don't change the
             number of instructions (3) below. */
-         /* movw r12, lo16(VG_(disp_cp_chain_me_to_{slowEP,fastEP})) */
-         /* movt r12, hi16(VG_(disp_cp_chain_me_to_{slowEP,fastEP})) */
+         /* movw r12, lo16(vda->disp_cp_chain_me_to_{slowEP,fastEP}) */
+         /* movt r12, hi16(vda->disp_cp_chain_me_to_{slowEP,fastEP}) */
          /* blx  r12  (A1) */
          const void* disp_cp_chain_me
-                  = i->ARMin.XDirect.toFastEP ? disp_cp_chain_me_to_fastEP 
-                                              : disp_cp_chain_me_to_slowEP;
-         p = imm32_to_ireg_EXACTLY2(p, /*r*/12,
-                                    (UInt)(Addr)disp_cp_chain_me);
-         *p++ = 0xE12FFF3C;
+            = i->ARMin.XDirect.toFastEP ? vda->disp_cp_chain_me_to_fastEP 
+                                        : vda->disp_cp_chain_me_to_slowEP;
+         imm32_to_ireg_EXACTLY2(ab, /*r*/12, (UInt)(Addr)disp_cp_chain_me);
+         PUT(ab, 0xE12FFF3C);
          /* --- END of PATCHABLE BYTES --- */
 
          /* Fix up the conditional jump, if there was one. */
          if (i->ARMin.XDirect.cond != ARMcc_AL) {
-            Int delta = (UChar*)p - (UChar*)ptmp; /* must be signed */
+            /* |delta| must be signed */
+            Int delta = AssemblyBuffer__getCursor(ab) - (UChar*)ptmp;
             vassert(delta > 0 && delta < 40);
             vassert((delta & 3) == 0);
             UInt notCond = 1 ^ (UInt)i->ARMin.XDirect.cond;
@@ -3250,7 +3259,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             translations without going through the scheduler.  That
             means no XDirects or XIndirs out from no-redir
             translations.  Hence: */
-         vassert(disp_cp_xindir != NULL);
+         vassert(vda->disp_cp_xindir != NULL);
 
          /* Use ptmp for backpatching conditional jumps. */
          UInt* ptmp = NULL;
@@ -3260,25 +3269,26 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             it that we will shortly fill in. */
          if (i->ARMin.XIndir.cond != ARMcc_AL) {
             vassert(i->ARMin.XIndir.cond != ARMcc_NV);
-            ptmp = p;
-            *p++ = 0;
+            ptmp = AssemblyBuffer__getCursor_4aligned(ab);
+            PUT(ab, 0);
          }
 
          /* Update the guest R15T. */
          /* str r-dstGA, amR15T */
-         p = do_load_or_store32(p, False/*!isLoad*/,
-                                iregEnc(i->ARMin.XIndir.dstGA),
-                                i->ARMin.XIndir.amR15T);
+         do_load_or_store32(ab, False/*!isLoad*/,
+                            iregEnc(i->ARMin.XIndir.dstGA),
+                            i->ARMin.XIndir.amR15T);
 
-         /* movw r12, lo16(VG_(disp_cp_xindir)) */
-         /* movt r12, hi16(VG_(disp_cp_xindir)) */
+         /* movw r12, lo16(vda->disp_cp_xindir) */
+         /* movt r12, hi16(vda->disp_cp_xindir) */
          /* bx   r12  (A1) */
-         p = imm32_to_ireg(p, /*r*/12, (UInt)(Addr)disp_cp_xindir);
-         *p++ = 0xE12FFF1C;
+         imm32_to_ireg(ab, /*r*/12, (UInt)(Addr)vda->disp_cp_xindir);
+         PUT(ab, 0xE12FFF1C);
 
          /* Fix up the conditional jump, if there was one. */
          if (i->ARMin.XIndir.cond != ARMcc_AL) {
-            Int delta = (UChar*)p - (UChar*)ptmp; /* must be signed */
+            /* |delta| must be signed */
+            Int delta = AssemblyBuffer__getCursor(ab) - (UChar*)ptmp;
             vassert(delta > 0 && delta < 40);
             vassert((delta & 3) == 0);
             UInt notCond = 1 ^ (UInt)i->ARMin.XIndir.cond;
@@ -3298,15 +3308,15 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             it that we will shortly fill in. */
          if (i->ARMin.XAssisted.cond != ARMcc_AL) {
             vassert(i->ARMin.XAssisted.cond != ARMcc_NV);
-            ptmp = p;
-            *p++ = 0;
+            ptmp = AssemblyBuffer__getCursor_4aligned(ab);
+            PUT(ab, 0);
          }
 
          /* Update the guest R15T. */
          /* str r-dstGA, amR15T */
-         p = do_load_or_store32(p, False/*!isLoad*/,
-                                iregEnc(i->ARMin.XAssisted.dstGA),
-                                i->ARMin.XAssisted.amR15T);
+         do_load_or_store32(ab, False/*!isLoad*/,
+                            iregEnc(i->ARMin.XAssisted.dstGA),
+                            i->ARMin.XAssisted.amR15T);
 
          /* movw r8,  $magic_number */
          UInt trcval = 0;
@@ -3332,17 +3342,18 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
                vpanic("emit_ARMInstr.ARMin_XAssisted: unexpected jump kind");
          }
          vassert(trcval != 0);
-         p = imm32_to_ireg(p, /*r*/8, trcval);
+         imm32_to_ireg(ab, /*r*/8, trcval);
 
-         /* movw r12, lo16(VG_(disp_cp_xassisted)) */
-         /* movt r12, hi16(VG_(disp_cp_xassisted)) */
+         /* movw r12, lo16(vda->disp_cp_xassisted) */
+         /* movt r12, hi16(vda->disp_cp_xassisted) */
          /* bx   r12  (A1) */
-         p = imm32_to_ireg(p, /*r*/12, (UInt)(Addr)disp_cp_xassisted);
-         *p++ = 0xE12FFF1C;
+         imm32_to_ireg(ab, /*r*/12, (UInt)(Addr)vda->disp_cp_xassisted);
+         PUT(ab, 0xE12FFF1C);
 
          /* Fix up the conditional jump, if there was one. */
          if (i->ARMin.XAssisted.cond != ARMcc_AL) {
-            Int delta = (UChar*)p - (UChar*)ptmp; /* must be signed */
+            /* |delta| must be signed */
+            Int delta = AssemblyBuffer__getCursor(ab) - (UChar*)ptmp;
             vassert(delta > 0 && delta < 40);
             vassert((delta & 3) == 0);
             UInt notCond = 1 ^ (UInt)i->ARMin.XAssisted.cond;
@@ -3360,7 +3371,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          instr |= XXXXX___(i->ARMin.CMov.cond, (1 & (subopc >> 3)),
                            (subopc << 1) & 0xF, SBZ,
                            iregEnc(i->ARMin.CMov.dst));
-         *p++ = instr;
+         PUT(ab, instr);
          goto done;
       }
 
@@ -3383,13 +3394,12 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          if (i->ARMin.Call.cond == ARMcc_AL/*call always happens*/
              || i->ARMin.Call.rloc.pri == RLPri_None/*no fixup action*/) {
             // r"scratchNo" = &target
-            p = imm32_to_ireg( (UInt*)p,
-                               scratchNo, (UInt)i->ARMin.Call.target );
+            imm32_to_ireg( ab, scratchNo, (UInt)i->ARMin.Call.target );
             // blx{cond} r"scratchNo"
             instr = XXX___XX(i->ARMin.Call.cond, X0001, X0010, /*___*/
                              X0011, scratchNo);
             instr |= 0xFFF << 8; // stick in the SBOnes
-            *p++ = instr;
+            PUT(ab, instr);
          } else {
             Int delta;
             /* Complex case.  We have to generate an if-then-else
@@ -3406,29 +3416,29 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             // after:
 
             // before:
-            UInt* pBefore = p;
+            UInt* pBefore = AssemblyBuffer__getCursor_4aligned(ab);
 
             //   b{!cond} else:  // ptmp1 points here
-            *p++ = 0; // filled in later
+            PUT(ab, 0); // filled in later
 
             //   r"scratchNo" = &target
-            p = imm32_to_ireg( (UInt*)p,
-                               scratchNo, (UInt)i->ARMin.Call.target );
+            imm32_to_ireg( ab, scratchNo, (UInt)i->ARMin.Call.target );
 
             //   blx{AL} r"scratchNo"
             instr = XXX___XX(ARMcc_AL, X0001, X0010, /*___*/
                              X0011, scratchNo);
             instr |= 0xFFF << 8; // stick in the SBOnes
-            *p++ = instr;
+            PUT(ab, instr);
 
             // preElse:
-            UInt* pPreElse = p;
+            UInt* pPreElse = AssemblyBuffer__getCursor_4aligned(ab);
 
             //   b after:
-            *p++ = 0; // filled in later
+            PUT(ab, 0); // filled in later
 
             // else:
-            delta = (UChar*)p - (UChar*)pBefore;
+            delta = AssemblyBuffer__getCursor(ab) - (UChar*)pBefore;
+            vassert(IS_4_ALIGNED(delta));
             delta = (delta >> 2) - 2;
             *pBefore
                = XX______(1 ^ i->ARMin.Call.cond, X1010) | (delta & 0xFFFFFF);
@@ -3436,20 +3446,21 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             /* Do the 'else' actions */
             switch (i->ARMin.Call.rloc.pri) {
                case RLPri_Int:
-                  p = imm32_to_ireg_EXACTLY2(p, /*r*/0, 0x55555555);
+                  imm32_to_ireg_EXACTLY2(ab, /*r*/0, 0x55555555);
                   break;
                case RLPri_2Int:
                   vassert(0); //ATC
-                  p = imm32_to_ireg_EXACTLY2(p, /*r*/0, 0x55555555);
+                  imm32_to_ireg_EXACTLY2(ab, /*r*/0, 0x55555555);
                   /* mov r1, r0 */
-                  *p++ = 0xE1A01000;
+                  PUT(ab, 0xE1A01000);
                   break;
                case RLPri_None: case RLPri_INVALID: default:
                   vassert(0);
             }
 
             // after:
-            delta = (UChar*)p - (UChar*)pPreElse;
+            delta = AssemblyBuffer__getCursor(ab) - (UChar*)pPreElse;
+            vassert(IS_4_ALIGNED(delta));
             delta = (delta >> 2) - 2;
             *pPreElse = XX______(ARMcc_AL, X1010) | (delta & 0xFFFFFF);
          }
@@ -3463,9 +3474,9 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             E0C10392   smull   r0(LO), r1(HI), r2, r3
          */
          switch (i->ARMin.Mul.op) {
-            case ARMmul_PLAIN: *p++ = 0xE0000392; goto done;
-            case ARMmul_ZX:    *p++ = 0xE0810392; goto done;
-            case ARMmul_SX:    *p++ = 0xE0C10392; goto done;
+            case ARMmul_PLAIN: PUT(ab, 0xE0000392); goto done;
+            case ARMmul_ZX:    PUT(ab, 0xE0810392); goto done;
+            case ARMmul_SX:    PUT(ab, 0xE0C10392); goto done;
             default: vassert(0);
          }
          goto bad;
@@ -3477,10 +3488,10 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             E1B42F9F   ldrexd r2, r3, [r4]
          */
          switch (i->ARMin.LdrEX.szB) {
-            case 1: *p++ = 0xE1D42F9F; goto done;
-            case 2: *p++ = 0xE1F42F9F; goto done;
-            case 4: *p++ = 0xE1942F9F; goto done;
-            case 8: *p++ = 0xE1B42F9F; goto done;
+            case 1: PUT(ab, 0xE1D42F9F); goto done;
+            case 2: PUT(ab, 0xE1F42F9F); goto done;
+            case 4: PUT(ab, 0xE1942F9F); goto done;
+            case 8: PUT(ab, 0xE1B42F9F); goto done;
             default: break;
          }
          goto bad;
@@ -3492,10 +3503,10 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             E1A40F92   strexd r0, r2, r3, [r4]
          */
          switch (i->ARMin.StrEX.szB) {
-            case 1: *p++ = 0xE1C40F92; goto done;
-            case 2: *p++ = 0xE1E40F92; goto done;
-            case 4: *p++ = 0xE1840F92; goto done;
-            case 8: *p++ = 0xE1A40F92; goto done;
+            case 1: PUT(ab, 0xE1C40F92); goto done;
+            case 2: PUT(ab, 0xE1E40F92); goto done;
+            case 4: PUT(ab, 0xE1840F92); goto done;
+            case 8: PUT(ab, 0xE1A40F92); goto done;
             default: break;
          }
          goto bad;
@@ -3513,7 +3524,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          vassert(0 == (off8 & 0xFFFFFF00));
          insn = XXXXXX__(0xE,X1101,BITS4(bU,0,0,bL),rN,dD,X1011);
          insn |= off8;
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_VLdStS: {
@@ -3530,7 +3541,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          vassert(0 == (off8 & 0xFFFFFF00));
          insn = XXXXXX__(0xE,X1101,BITS4(bU,bD,0,bL),rN, (fD >> 1), X1010);
          insn |= off8;
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_VAluD: {
@@ -3552,7 +3563,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          UInt bS  = (pqrs >> 0) & 1;
          UInt insn = XXXXXXXX(0xE, X1110, BITS4(bP,0,bQ,bR), dN, dD,
                               X1011, BITS4(0,bS,0,0), dM);
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_VAluS: {
@@ -3578,7 +3589,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          UInt insn = XXXXXXXX(0xE, X1110, BITS4(bP,bD,bQ,bR),
                               (dN >> 1), (dD >> 1),
                               X1010, BITS4(bN,bS,bM,0), (dM >> 1));
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_VUnaryD: {
@@ -3601,7 +3612,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             default:
                goto bad;
          }
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_VUnaryS: {
@@ -3632,15 +3643,15 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             default:
                goto bad;
          }
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_VCmpD: {
          UInt dD   = dregEnc(i->ARMin.VCmpD.argL);
          UInt dM   = dregEnc(i->ARMin.VCmpD.argR);
          UInt insn = XXXXXXXX(0xE, X1110, X1011, X0100, dD, X1011, X0100, dM);
-         *p++ = insn;       /* FCMPD dD, dM */
-         *p++ = 0xEEF1FA10; /* FMSTAT */
+         PUT(ab, insn);       /* FCMPD dD, dM */
+         PUT(ab, 0xEEF1FA10); /* FMSTAT */
          goto done;
       }
       case ARMin_VCMovD: {
@@ -3649,7 +3660,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          UInt dM = dregEnc(i->ARMin.VCMovD.src);
          vassert(cc < 16 && cc != ARMcc_AL);
          UInt insn = XXXXXXXX(cc, X1110,X1011,X0000,dD,X1011,X0100,dM);
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_VCMovS: {
@@ -3660,7 +3671,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          UInt insn = XXXXXXXX(cc, X1110, BITS4(1,(fD & 1),1,1),
                               X0000,(fD >> 1),X1010,
                               BITS4(0,1,(fM & 1),0), (fM >> 1));
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_VCvtSD: {
@@ -3670,7 +3681,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             UInt insn = XXXXXXXX(0xE, X1110, X1011, X0111, dD, X1010,
                                  BITS4(1,1, (fM & 1), 0),
                                  (fM >> 1));
-            *p++ = insn;
+            PUT(ab, insn);
             goto done;
          } else {
             UInt fD = fregEnc(i->ARMin.VCvtSD.dst);
@@ -3678,7 +3689,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             UInt insn = XXXXXXXX(0xE, X1110, BITS4(1,(fD & 1),1,1),
                                  X0111, (fD >> 1),
                                  X1011, X1100, dM);
-            *p++ = insn;
+            PUT(ab, insn);
             goto done;
          }
       }
@@ -3695,7 +3706,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             = XXXXXXXX(0xE, 0xC, i->ARMin.VXferD.toD ? 4 : 5,
                        rHi, rLo, 0xB,
                        BITS4(0,0, ((dD >> 4) & 1), 1), (dD & 0xF));
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_VXferS: {
@@ -3710,7 +3721,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             = XXXXXXXX(0xE, 0xE, i->ARMin.VXferS.toS ? 0 : 1,
                        (fD >> 1) & 0xF, rLo, 0xA, 
                        BITS4((fD & 1),0,0,1), 0);
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_VCvtID: {
@@ -3723,7 +3734,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             UInt insn = XXXXXXXX(0xE, X1110, X1011, X1000, regD,
                                  X1011, BITS4(1,1,(regF & 1),0),
                                  (regF >> 1) & 0xF);
-            *p++ = insn;
+            PUT(ab, insn);
             goto done;
          }
          if (iToD && (!syned)) {
@@ -3733,7 +3744,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             UInt insn = XXXXXXXX(0xE, X1110, X1011, X1000, regD,
                                  X1011, BITS4(0,1,(regF & 1),0),
                                  (regF >> 1) & 0xF);
-            *p++ = insn;
+            PUT(ab, insn);
             goto done;
          }
          if ((!iToD) && syned) {
@@ -3743,7 +3754,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             UInt insn = XXXXXXXX(0xE, X1110, BITS4(1,(regF & 1),1,1),
                                  X1101, (regF >> 1) & 0xF,
                                  X1011, X0100, regD);
-            *p++ = insn;
+            PUT(ab, insn);
             goto done;
          }
          if ((!iToD) && (!syned)) {
@@ -3753,7 +3764,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             UInt insn = XXXXXXXX(0xE, X1110, BITS4(1,(regF & 1),1,1),
                                  X1100, (regF >> 1) & 0xF,
                                  X1011, X0100, regD);
-            *p++ = insn;
+            PUT(ab, insn);
             goto done;
          }
          /*UNREACHED*/
@@ -3764,7 +3775,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          UInt iReg    = iregEnc(i->ARMin.FPSCR.iReg);
          if (toFPSCR) {
             /* fmxr fpscr, iReg is EEE1 iReg A10 */
-            *p++ = 0xEEE10A10 | ((iReg & 0xF) << 12);
+            PUT(ab, 0xEEE10A10 | ((iReg & 0xF) << 12));
             goto done;
          }
          goto bad; // FPSCR -> iReg case currently ATC
@@ -3773,16 +3784,16 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          // It's not clear (to me) how these relate to the ARMv7
          // versions, so let's just use the v7 versions as they
          // are at least well documented.
-         //*p++ = 0xEE070F9A; /* mcr 15,0,r0,c7,c10,4 (DSB) */
-         //*p++ = 0xEE070FBA; /* mcr 15,0,r0,c7,c10,5 (DMB) */
-         //*p++ = 0xEE070F95; /* mcr 15,0,r0,c7,c5,4  (ISB) */
-         *p++ = 0xF57FF04F; /* DSB sy */
-         *p++ = 0xF57FF05F; /* DMB sy */
-         *p++ = 0xF57FF06F; /* ISB */
+         //PUT(ab, 0xEE070F9A); /* mcr 15,0,r0,c7,c10,4 (DSB) */
+         //PUT(ab, 0xEE070FBA); /* mcr 15,0,r0,c7,c10,5 (DMB) */
+         //PUT(ab, 0xEE070F95); /* mcr 15,0,r0,c7,c5,4  (ISB) */
+         PUT(ab, 0xF57FF04F); /* DSB sy */
+         PUT(ab, 0xF57FF05F); /* DMB sy */
+         PUT(ab, 0xF57FF06F); /* ISB */
          goto done;
       }
       case ARMin_CLREX: {
-         *p++ = 0xF57FF01F; /* clrex */
+         PUT(ab, 0xF57FF01F); /* clrex */
          goto done;
       }
 
@@ -3803,7 +3814,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          }
          insn = XXXXXXXX(0xF, X0100, BITS4(0, D, bL, 0),
                               regN, regD, X1010, X1000, regM);
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_NLdStD: {
@@ -3823,7 +3834,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          }
          insn = XXXXXXXX(0xF, X0100, BITS4(0, D, bL, 0),
                               regN, regD, X0111, X1000, regM);
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_NUnaryS: {
@@ -3854,7 +3865,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
                insn = XXXXXXXX(0xF, X0011, BITS4(1,D,1,1),
                                (i->ARMin.NUnaryS.size & 0xf), regD,
                                X1100, BITS4(0,Q,M,0), regM);
-               *p++ = insn;
+               PUT(ab, insn);
                goto done; 
             case ARMneon_SETELEM:
                regD = Q ? (qregEnc(i->ARMin.NUnaryS.dst->reg) << 1) :
@@ -3890,7 +3901,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
                insn = XXXXXXXX(0xE, X1110, BITS4(0,(opc1 >> 1),(opc1 & 1),0),
                                regD, regM, X1011,
                                BITS4(D,(opc2 >> 1),(opc2 & 1),1), X0000);
-               *p++ = insn;
+               PUT(ab, insn);
                goto done;
             case ARMneon_GETELEMU:
                regM = Q ? (qregEnc(i->ARMin.NUnaryS.src->reg) << 1) :
@@ -3931,7 +3942,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
                insn = XXXXXXXX(0xE, X1110, BITS4(1,(opc1 >> 1),(opc1 & 1),1),
                                regM, regD, X1011,
                                BITS4(M,(opc2 >> 1),(opc2 & 1),1), X0000);
-               *p++ = insn;
+               PUT(ab, insn);
                goto done;
             case ARMneon_GETELEMS:
                regM = Q ? (qregEnc(i->ARMin.NUnaryS.src->reg) << 1) :
@@ -3979,7 +3990,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
                insn = XXXXXXXX(0xE, X1110, BITS4(0,(opc1 >> 1),(opc1 & 1),1),
                                regM, regD, X1011,
                                BITS4(M,(opc2 >> 1),(opc2 & 1),1), X0000);
-               *p++ = insn;
+               PUT(ab, insn);
                goto done;
             default:
                goto bad;
@@ -4198,7 +4209,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             default:
                goto bad;
          }
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_NDual: {
@@ -4232,7 +4243,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             default:
                goto bad;
          }
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_NBinary: {
@@ -4458,7 +4469,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             default:
                goto bad;
          }
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_NShift: {
@@ -4501,7 +4512,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             default:
                goto bad;
          }
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_NShl64: {
@@ -4521,7 +4532,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          UInt Vm   = regM & 0xF;
          UInt insn = XXXXXXXX(X1111,X0010, BITS4(1,D,(amt>>5)&1,(amt>>4)&1),
                               amt & 0xF, Vd, X0101, BITS4(L,Q,M,1), Vm);
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_NeonImm: {
@@ -4569,7 +4580,7 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          }
          insn = XXXXXXXX(0xF, BITS4(0,0,1,j), BITS4(1,D,0,0), imm3, regD,
                          cmode, BITS4(0,Q,op,1), imm4);
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_NCMovQ: {
@@ -4583,11 +4594,11 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          vassert(cc < 16 && cc != ARMcc_AL && cc != ARMcc_NV);
          /* b!cc here+8: !cc A00 0000 */
          UInt insn = XXXXXXXX(cc ^ 1, 0xA, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0);
-         *p++ = insn;
+         PUT(ab, insn);
          /* vmov qD, qM */
          insn = XXXXXXXX(0xF, 0x2, BITS4(0,D,1,0),
                          vM, vD, BITS4(0,0,0,1), BITS4(M,1,M,1), vM);
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
       case ARMin_Add32: {
@@ -4596,10 +4607,10 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
          UInt imm32 = i->ARMin.Add32.imm32;
          vassert(regD != regN);
          /* MOV regD, imm32 */
-         p = imm32_to_ireg((UInt *)p, regD, imm32);
+         imm32_to_ireg(ab, regD, imm32);
          /* ADD regD, regN, regD */
          UInt insn = XXXXXXXX(0xE, 0, X1000, regN, regD, 0, 0, regD);
-         *p++ = insn;
+         PUT(ab, insn);
          goto done;
       }
 
@@ -4613,20 +4624,21 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
                bx   r12
               nofail:
          */
-         UInt* p0 = p;
-         p = do_load_or_store32(p, True/*isLoad*/, /*r*/12,
-                                i->ARMin.EvCheck.amCounter);
-         *p++ = 0xE25CC001; /* subs r12, r12, #1 */
-         p = do_load_or_store32(p, False/*!isLoad*/, /*r*/12,
-                                i->ARMin.EvCheck.amCounter);
-         *p++ = 0x5A000001; /* bpl nofail */
-         p = do_load_or_store32(p, True/*isLoad*/, /*r*/12,
-                                i->ARMin.EvCheck.amFailAddr);
-         *p++ = 0xE12FFF1C; /* bx r12 */
+         UInt* p0 = AssemblyBuffer__getCursor_4aligned(ab);
+         do_load_or_store32(ab, True/*isLoad*/, /*r*/12,
+                            i->ARMin.EvCheck.amCounter);
+         PUT(ab, 0xE25CC001); /* subs r12, r12, #1 */
+         do_load_or_store32(ab, False/*!isLoad*/, /*r*/12,
+                            i->ARMin.EvCheck.amCounter);
+         PUT(ab, 0x5A000001); /* bpl nofail */
+         do_load_or_store32(ab, True/*isLoad*/, /*r*/12,
+                            i->ARMin.EvCheck.amFailAddr);
+         PUT(ab, 0xE12FFF1C); /* bx r12 */
          /* nofail: */
 
          /* Crosscheck */
-         vassert(evCheckSzB_ARM() == (UChar*)p - (UChar*)p0);
+         vassert(evCheckSzB_ARM()
+                 == (UChar*)AssemblyBuffer__getCursor(ab) - (UChar*)p0);
          goto done;
       }
 
@@ -4645,16 +4657,16 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
             adc  r11, r11, #0
             str  r11, [r12+4]
          */
-         p = imm32_to_ireg_EXACTLY2(p, /*r*/12, 0x65556555);
-         *p++ = 0xE59CB000;
-         *p++ = 0xE29BB001;
-         *p++ = 0xE58CB000;
-         *p++ = 0xE59CB004;
-         *p++ = 0xE2ABB000;
-         *p++ = 0xE58CB004;
+         imm32_to_ireg_EXACTLY2(ab, /*r*/12, 0x65556555);
+         PUT(ab, 0xE59CB000);
+         PUT(ab, 0xE29BB001);
+         PUT(ab, 0xE58CB000);
+         PUT(ab, 0xE59CB004);
+         PUT(ab, 0xE2ABB000);
+         PUT(ab, 0xE58CB004);
          /* Tell the caller .. */
-         vassert(!(*is_profInc));
-         *is_profInc = True;
+         vassert(!is_profInc);
+         is_profInc = True;
          goto done;
       }
 
@@ -4669,10 +4681,12 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
    /*NOTREACHED*/
 
   done:
-   vassert(((UChar*)p) - &buf[0] <= 32);
-   return ((UChar*)p) - &buf[0];
+   vassert(AssemblyBuffer__getCursor(ab) - initialCursor <= 32);
+   return is_profInc;
 }
 
+
+/* --------- Helpers for translation chaining. --------- */
 
 /* How big is an event check?  See case for ARMin_EvCheck in
    emit_ARMInstr just above.  That crosschecks what this returns, so
@@ -4756,9 +4770,11 @@ VexInvalRange chainXDirect_ARM ( VexEndness endness_host,
       p[1] = 0xFF000000;
       p[2] = 0xFF000000;
    } else {
-      (void)imm32_to_ireg_EXACTLY2(
-               p, /*r*/12, (UInt)(Addr)place_to_jump_to);
-      p[2] = 0xE12FFF1C;
+      AssemblyBuffer ab;
+      AssemblyBuffer__init(&ab, (UChar*)p, 12);
+      imm32_to_ireg_EXACTLY2(&ab, /*r*/12, (UInt)(Addr)place_to_jump_to);
+      PUT(&ab, 0xE12FFF1C);
+      vassert(AssemblyBuffer__getRemainingSize(&ab) == 0);
    }
 
    VexInvalRange vir = {(HWord)p, 12};
@@ -4822,9 +4838,11 @@ VexInvalRange unchainXDirect_ARM ( VexEndness endness_host,
         <8 bytes generated by imm32_to_ireg_EXACTLY2>
         E1 2F FF 3C
    */
-   (void)imm32_to_ireg_EXACTLY2(
-            p, /*r*/12, (UInt)(Addr)disp_cp_chain_me);
-   p[2] = 0xE12FFF3C;
+   AssemblyBuffer ab;
+   AssemblyBuffer__init(&ab, (UChar*)p, 12);
+   imm32_to_ireg_EXACTLY2(&ab, /*r*/12, (UInt)(Addr)disp_cp_chain_me);
+   PUT(&ab, 0xE12FFF3C);
+   vassert(AssemblyBuffer__getRemainingSize(&ab) == 0);
    VexInvalRange vir = {(HWord)p, 12};
    return vir;
 }
@@ -4847,12 +4865,16 @@ VexInvalRange patchProfInc_ARM ( VexEndness endness_host,
    vassert(p[5] == 0xE59CB004);
    vassert(p[6] == 0xE2ABB000);
    vassert(p[7] == 0xE58CB004);
-   imm32_to_ireg_EXACTLY2(p, /*r*/12, (UInt)(Addr)location_of_counter);
+   AssemblyBuffer ab;
+   AssemblyBuffer__init(&ab, (UChar*)p, 8);
+   imm32_to_ireg_EXACTLY2(&ab, /*r*/12, (UInt)(Addr)location_of_counter);
+   vassert(AssemblyBuffer__getRemainingSize(&ab) == 0);
    VexInvalRange vir = {(HWord)p, 8};
    return vir;
 }
 
 
+#undef PUT
 #undef BITS4
 #undef X0000
 #undef X0001

@@ -301,8 +301,6 @@ static inline UInt ULong__minIndex ( ULong w64 ) {
 /* Vectorised memset, copied from Valgrind's m_libcbase.c. */
 static void* local_memset ( void *destV, Int c, SizeT sz )
 {
-#  define IS_4_ALIGNED(aaa_p) (0 == (((HWord)(aaa_p)) & ((HWord)0x3)))
-
    UInt   c4;
    UChar* d = destV;
    UChar  uc = c;
@@ -336,8 +334,6 @@ static void* local_memset ( void *destV, Int c, SizeT sz )
       sz--;
    }
    return destV;
-
-#  undef IS_4_ALIGNED
 }
 
 

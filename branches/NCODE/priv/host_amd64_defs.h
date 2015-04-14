@@ -838,9 +838,10 @@ extern AMD64Instr* mk_iMOVsd_RR ( HReg src, HReg dst );
 extern void getRegUsage_AMD64Instr ( HRegUsage*, const AMD64Instr*, Bool );
 extern void mapRegs_AMD64Instr     ( HRegRemap*, AMD64Instr*, Bool );
 extern Bool isMove_AMD64Instr      ( const AMD64Instr*, HReg*, HReg* );
-extern Bool emit_AMD64Instr        ( /*MOD*/AssemblyBuffer*,
-                                     const AMD64Instr*, Bool, VexEndness,
-                                     const VexDispatcherAddresses* );
+
+extern Bool emit_AMD64Instr ( /*MOD*/AssemblyBuffer*,
+                              const AMD64Instr*, Bool mode64, VexEndness,
+                              const VexDispatcherAddresses* );
 
 extern Bool emit_AMD64NCodeBlock ( /*MOD*/AssemblyBuffer*   ab_hot,
                                    /*MOD*/AssemblyBuffer*   ab_cold,
@@ -856,15 +857,15 @@ extern void genReload_AMD64 ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
 
 extern const RRegUniverse* getRRegUniverse_AMD64 ( void );
 
-extern HInstrArray* iselSB_AMD64           ( const IRSB*, 
-                                             VexArch,
-                                             const VexArchInfo*,
-                                             const VexAbiInfo*,
-                                             Int offs_Host_EvC_Counter,
-                                             Int offs_Host_EvC_FailAddr,
-                                             Bool chainingAllowed,
-                                             Bool addProfInc,
-                                             Addr max_ga );
+extern HInstrArray* iselSB_AMD64 ( const IRSB*, 
+                                   VexArch,
+                                   const VexArchInfo*,
+                                   const VexAbiInfo*,
+                                   Int offs_Host_EvC_Counter,
+                                   Int offs_Host_EvC_FailAddr,
+                                   Bool chainingAllowed,
+                                   Bool addProfInc,
+                                   Addr max_ga );
 
 /* How big is an event check?  This is kind of a kludge because it
    depends on the offsets of host_EvC_FAILADDR and host_EvC_COUNTER,

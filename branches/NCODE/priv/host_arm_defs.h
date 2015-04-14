@@ -1027,31 +1027,28 @@ extern void ppARMInstr ( const ARMInstr* );
 extern void getRegUsage_ARMInstr ( HRegUsage*, const ARMInstr*, Bool );
 extern void mapRegs_ARMInstr     ( HRegRemap*, ARMInstr*, Bool );
 extern Bool isMove_ARMInstr      ( const ARMInstr*, HReg*, HReg* );
-extern Int  emit_ARMInstr        ( /*MB_MOD*/Bool* is_profInc,
-                                   UChar* buf, Int nbuf, const ARMInstr* i, 
-                                   Bool mode64,
-                                   VexEndness endness_host,
-                                   const void* disp_cp_chain_me_to_slowEP,
-                                   const void* disp_cp_chain_me_to_fastEP,
-                                   const void* disp_cp_xindir,
-                                   const void* disp_cp_xassisted );
+
+extern Bool emit_ARMInstr ( /*MOD*/AssemblyBuffer* ab,
+                            const ARMInstr* i, 
+                            Bool mode64, VexEndness endness_host,
+                            const VexDispatcherAddresses* vda );
 
 extern void genSpill_ARM  ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
-                            HReg rreg, Int offset, Bool );
+                            HReg rreg, Bool spRel, Int offset, Bool );
 extern void genReload_ARM ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
-                            HReg rreg, Int offset, Bool );
+                            HReg rreg, Bool spRel, Int offset, Bool );
 
 extern const RRegUniverse* getRRegUniverse_ARM ( void );
 
-extern HInstrArray* iselSB_ARM   ( const IRSB*, 
-                                   VexArch,
-                                   const VexArchInfo*,
-                                   const VexAbiInfo*,
-                                   Int offs_Host_EvC_Counter,
-                                   Int offs_Host_EvC_FailAddr,
-                                   Bool chainingAllowed,
-                                   Bool addProfInc,
-                                   Addr max_ga );
+extern HInstrArray* iselSB_ARM ( const IRSB*, 
+                                 VexArch,
+                                 const VexArchInfo*,
+                                 const VexAbiInfo*,
+                                 Int offs_Host_EvC_Counter,
+                                 Int offs_Host_EvC_FailAddr,
+                                 Bool chainingAllowed,
+                                 Bool addProfInc,
+                                 Addr max_ga );
 
 /* How big is an event check?  This is kind of a kludge because it
    depends on the offsets of host_EvC_FAILADDR and

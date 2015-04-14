@@ -2158,7 +2158,7 @@ void genReload_AMD64 ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
 
 /* --------- The amd64 assembler (bleh.) --------- */
 
-#define PUT(_ab, _byte) \
+#define PUT(_ab, _byte)                    \
    do { UInt _off        = (_ab)->bufUsed; \
         (_ab)->buf[_off] = (_byte);        \
         (_ab)->bufUsed   = _off + 1;       \

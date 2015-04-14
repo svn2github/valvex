@@ -545,7 +545,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
          host_word_type = Ity_I64;
          vassert(vta->archinfo_host.endness == VexEndnessBE);
          break;
-
+#endif
       case VexArchARM:
          mode64       = False;
          rRegUniv     = ARMFN(getRRegUniverse_ARM());
@@ -562,7 +562,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
          host_word_type = Ity_I32;
          vassert(vta->archinfo_host.endness == VexEndnessLE);
          break;
-
+#if 0
       case VexArchARM64:
          mode64       = True;
          rRegUniv     = ARM64FN(getRRegUniverse_ARM64());
@@ -732,7 +732,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
          vassert(sizeof( ((VexGuestS390XState*)0)->guest_CMLEN      ) == 8);
          vassert(sizeof( ((VexGuestS390XState*)0)->guest_NRADDR     ) == 8);
          break;
-
+#endif
       case VexArchARM:
          preciseMemExnsFn       
             = ARMFN(guest_arm_state_requires_precise_mem_exns);
@@ -753,7 +753,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
          vassert(sizeof( ((VexGuestARMState*)0)->guest_CMLEN  ) == 4);
          vassert(sizeof( ((VexGuestARMState*)0)->guest_NRADDR ) == 4);
          break;
-
+#if 0
       case VexArchARM64:
          preciseMemExnsFn     
             = ARM64FN(guest_arm64_state_requires_precise_mem_exns);
@@ -1214,7 +1214,8 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
          (see comment on definition of type Relocation) */
       vassert(rl->rshift <= 2);
       Long E =
-         ((Long)(ULong)dst) + ((Long)rl->bias) - ((Long)(ULong)where);
+         ((Long)(ULong)(HWord)dst) + ((Long)rl->bias) 
+                                   - ((Long)(ULong)(HWord)where);
       E = E >>/*signed*/rl->rshift;
       if (debug_reloc)
          vex_printf("E = 0x%llx\n", E);
