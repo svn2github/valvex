@@ -154,7 +154,7 @@ void ppHRegMIPS(HReg reg, Bool mode64)
 
    /* Be generic for all virtual regs. */
    if (hregIsVirtual(reg)) {
-      ppHReg(reg);
+      ppHRegGENERIC(reg);
       return;
    }
 

@@ -58,7 +58,7 @@ void ppHRegClass ( HRegClass hrc )
 }
 
 /* Generic printing for registers. */
-void ppHReg ( HReg r ) 
+void ppHRegGENERIC ( HReg r ) 
 {
    if (hregIsInvalid(r)) {
       vex_printf("HReg_INVALID");
@@ -320,7 +320,7 @@ void ppHRegUsage ( const RRegUniverse* univ, HRegUsage* tab )
       else if (!rRd &&  rWr) { str = "Write  "; }
       /* else "Modify" is correct */
       vex_printf("   %s ", str);
-      ppHReg(univ->regs[i]);
+      ppHRegGENERIC(univ->regs[i]);
       vex_printf("\n");
    }
    /* and now the virtual registers */
@@ -333,7 +333,7 @@ void ppHRegUsage ( const RRegUniverse* univ, HRegUsage* tab )
          default: vpanic("ppHRegUsage");
       }
       vex_printf("   %s ", str);
-      ppHReg(tab->vRegs[i]);
+      ppHRegGENERIC(tab->vRegs[i]);
       vex_printf("\n");
    }
    vex_printf("}\n");
@@ -430,15 +430,15 @@ void addHRegUse_from_RRegSet ( HRegUsage* tab,
 /*--- Indicating register remappings (for reg-alloc)    ---*/
 /*---------------------------------------------------------*/
 
-void ppHRegRemap ( HRegRemap* map )
+void ppHRegRemap ( const HRegRemap* map )
 {
    Int   i;
    vex_printf("HRegRemap {\n");
    for (i = 0; i < map->n_used; i++) {
       vex_printf("   ");
-      ppHReg(map->orig[i]);
+      ppHRegGENERIC(map->orig[i]);
       vex_printf("  -->  ");
-      ppHReg(map->replacement[i]);
+      ppHRegGENERIC(map->replacement[i]);
       vex_printf("\n");
    }
    vex_printf("}\n");
@@ -463,7 +463,7 @@ void addToHRegRemap ( HRegRemap* map, HReg orig, HReg replacement )
 }
 
 
-HReg lookupHRegRemap ( HRegRemap* map, HReg orig )
+HReg lookupHRegRemap ( const HRegRemap* map, HReg orig )
 {
    Int i;
    if (!hregIsVirtual(orig))
@@ -573,6 +573,91 @@ UInt hregVecLen ( const HReg* vec )
 }
 
 
+/* Find the length of a vector of NRegs that is terminated by
+   an NReg_INVALID. */
+UInt nregVecLen ( const NReg* vec )
+{
+   UInt i;
+   for (i = 0; !isNRegINVALID(vec[i]); i++)
+      ;
+   return i;
+}
+
+
+/* Find the length of a vector of NInstr*s that is terminated by
+   NULL. */
+UInt ninstrVecLen ( NInstr** const vec )
+{
+   UInt i;
+   for (i = 0; vec[i]; i++)
+      ;
+   return i;
+}
+
+
+/* Print a HInstrNCode.  Caller must supply a register-printing
+   routine and a bit of text identifying the host architecture. */
+void HInstrNCode__show ( const HInstrNCode* details,
+                         void (*ppHReg)(HReg), const HChar* hostName )
+{
+   NCodeTemplate* tmpl = details->tmpl;
+   vex_printf("NCode-%s:%s [", hostName, tmpl->name);
+   UInt j;
+   for (j = 0; j < tmpl->nres; j++) {
+      ppHReg(details->regsR[j]);
+      if (j != tmpl->nres-1) vex_printf(" ");
+   }
+   vex_printf("] <= [");
+   for (j = 0; j < tmpl->narg; j++) {
+      ppHReg(details->regsA[j]);
+      if (j != tmpl->narg-1) vex_printf(" ");
+   }
+   vex_printf("] scratch [");
+   for (j = 0; j < tmpl->nscr; j++) {
+      ppHReg(details->regsS[j]);
+      if (j != tmpl->nscr-1) vex_printf(" ");
+   }
+   vex_printf("]");
+}
+
+
+/* Update |u| with the register usages of |details|. */
+void HInstrNCode__getRegUsage ( /*MOD*/HRegUsage* u,
+                                const HInstrNCode* details )
+{
+   NCodeTemplate* tmpl = details->tmpl;
+   // It writes the result and scratch registers.
+   UInt j;
+   for (j = 0; j < tmpl->nres; j++)
+      addHRegUse(u, HRmWrite, details->regsR[j]);
+   for (j = 0; j < tmpl->nscr; j++)
+      addHRegUse(u, HRmWrite, details->regsS[j]);
+   // It both reads and writes the arg regs.  We have to say
+   // they are written in order to force them to be allocated
+   // different registers from the arg and scratch registers,
+   // since we have no way to ensure that the NCode block
+   // doesn't write its scratch and result registers and later
+   // on read the argument registers.
+   for (j = 0; j < tmpl->narg; j++)
+      addHRegUse(u, HRmModify, details->regsA[j]);
+}
+
+
+/* Apply |map| to the registers in |details|. */
+void HInstrNCode__mapRegs ( /*MOD*/HInstrNCode* details,
+                            const HRegRemap* map )
+{
+   NCodeTemplate*   tmpl    = details->tmpl;
+   UInt j;
+   for (j = 0; j < tmpl->nres; j++)
+      details->regsR[j] = lookupHRegRemap(map, details->regsR[j]);
+   for (j = 0; j < tmpl->nscr; j++)
+      details->regsS[j] = lookupHRegRemap(map, details->regsS[j]);
+   for (j = 0; j < tmpl->narg; j++)
+      details->regsA[j] = lookupHRegRemap(map, details->regsA[j]);
+}
+
+
 /* Find the real (hard) register for |r| by looking up in |map|. */
 HReg mapNReg ( const NRegMap* map, NReg r )
 {
@@ -664,21 +749,141 @@ void calcRegistersToPreserveAroundNCodeCall (
 
    if (0) {
       vex_printf("              # set1: ");
-      RRegSet__pp(set_1, ppHReg); vex_printf("\n");
+      RRegSet__pp(set_1, ppHRegGENERIC); vex_printf("\n");
       vex_printf("              # set2: ");
-      RRegSet__pp(&set_2, ppHReg); vex_printf("\n");
+      RRegSet__pp(&set_2, ppHRegGENERIC); vex_printf("\n");
       vex_printf("              # set3: ");
-      RRegSet__pp(set_3, ppHReg); vex_printf("\n");
+      RRegSet__pp(set_3, ppHRegGENERIC); vex_printf("\n");
       vex_printf("              # set4: ");
-      RRegSet__pp(&set_4, ppHReg); vex_printf("\n");
+      RRegSet__pp(&set_4, ppHRegGENERIC); vex_printf("\n");
       vex_printf("              # pres: ");
-      RRegSet__pp(result, ppHReg); vex_printf("\n");
+      RRegSet__pp(result, ppHRegGENERIC); vex_printf("\n");
    }
 
    /* Remove any non allocatable registers (see big comment above) */
    RRegSet__deleteNonAllocatable(result);
 }
 
+
+/* Emits host code for the complete NCode block |details| into
+   |ab_hot| and |ab_cold|, possibly adding relocation information to
+   |rb| too.  The caller must supply a host-dependent function
+   |emit_OneNInstr| which generates host code for a single NInstr.
+   This function is required to generate <= 1024 bytes of code.
+   Returns True if OK, False if not enough buffer space.
+*/
+Bool HInstrNCode__emit (  /*MOD*/AssemblyBuffer*   ab_hot,
+                          /*MOD*/AssemblyBuffer*   ab_cold,
+                          /*MOD*/RelocationBuffer* rb,
+                         const HInstrNCode* details,
+                         Bool verbose,
+                         void (*emit_OneNInstr) (
+                            /*MOD*/AssemblyBuffer* ab,
+                            /*MOD*/RelocationBuffer* rb,
+                            const NInstr* ni,
+                            const NRegMap* nregMap,
+                            const RRegSet* hregsLiveAfter,
+                            /* the next 2 are for debug printing only */
+                            Bool verbose, NLabel niLabel
+                         )
+                       )
+ {
+   const NCodeTemplate* tmpl           = details->tmpl;
+   const RRegSet*       rregsLiveAfter = details->rrLiveAfter;
+
+   NRegMap nregMap;
+   nregMap.regsR  = details->regsR;
+   nregMap.regsA  = details->regsA;
+   nregMap.regsS  = details->regsS;
+   nregMap.nRegsR = tmpl->nres;
+   nregMap.nRegsA = tmpl->narg;
+   nregMap.nRegsS = tmpl->nscr;
+
+   vassert(hregVecLen(nregMap.regsR) == nregMap.nRegsR);
+   vassert(hregVecLen(nregMap.regsA) == nregMap.nRegsA);
+   vassert(hregVecLen(nregMap.regsS) == nregMap.nRegsS);
+
+   if (AssemblyBuffer__getRemainingSize(ab_hot) < 1024)
+      return False;
+   if (AssemblyBuffer__getRemainingSize(ab_cold) < 1024)
+      return False;
+   if (RelocationBuffer__getRemainingSize(rb) < 128)
+      return False;
+
+   /* Count how many hot and cold instructions (NInstrs) the template
+      has, since we'll need to allocate temporary arrays to keep track
+      of the label offsets. */
+   UInt nHot  = ninstrVecLen(tmpl->hot);
+   UInt nCold = ninstrVecLen(tmpl->cold);
+
+   /* Here are our two arrays for tracking the AssemblyBuffer offsets
+      of the NCode instructions. */
+   UInt i;
+   UInt offsetsHot[nHot];
+   UInt offsetsCold[nCold];
+   for (i = 0; i < nHot;  i++) offsetsHot[i]  = 0;
+   for (i = 0; i < nCold; i++) offsetsCold[i] = 0;
+
+   /* We'll be adding entries to the relocation buffer, |rb|, and will
+      need to adjust their |dst| fields after generation of the hot
+      and cold code.  Record therefore where we are in the buffer now,
+      so that we can iterate over the new entries later. */
+   UInt rb_first = RelocationBuffer__getNext(rb);
+
+   /* Generate the hot code */
+   for (i = 0; i < nHot; i++) {
+      offsetsHot[i] = AssemblyBuffer__getNext(ab_hot);
+      NLabel lbl = mkNLabel(Nlz_Hot, i);
+      emit_OneNInstr(ab_hot, rb, tmpl->hot[i], &nregMap,
+                     rregsLiveAfter, verbose, lbl);
+   }   
+
+   /* And the cold code */
+   for (i = 0; i < nCold; i++) {
+      offsetsCold[i] = AssemblyBuffer__getNext(ab_cold);
+      NLabel lbl = mkNLabel(Nlz_Cold, i);
+      emit_OneNInstr(ab_cold, rb, tmpl->cold[i], &nregMap,
+                     rregsLiveAfter, verbose, lbl);
+   }
+
+   /* Now visit the new relocation entries. */
+   UInt rb_last1 = RelocationBuffer__getNext(rb);
+
+   for (i = rb_first; i < rb_last1; i++) {
+      Relocation* reloc = &rb->buf[i];
+
+      /* Show the reloc before the label-to-offset transformation. */
+      if (verbose) {
+         vex_printf("   reloc:  ");
+         ppRelocation(reloc);
+         vex_printf("\n");
+      }
+
+      /* Transform the destination component of |reloc| so that it no
+         longer refers to a label but rather to an offset in the hot
+         or cold assembly buffer. */
+      vassert(!reloc->dst.isOffset);
+      reloc->dst.isOffset = True;
+
+      if (reloc->dst.zone == Nlz_Hot) {
+         vassert(reloc->dst.num < nHot);
+         reloc->dst.num = offsetsHot[reloc->dst.num];
+      } else {
+         vassert(reloc->dst.zone == Nlz_Cold);
+         vassert(reloc->dst.num < nCold);
+         reloc->dst.num = offsetsCold[reloc->dst.num];
+      }
+
+      /* Show the reloc after the label-to-offset transformation. */
+      if (verbose) {
+         vex_printf("   reloc:  ");
+         ppRelocation(reloc);
+         vex_printf("\n");
+      }
+   }
+
+   return True;
+}
 
 /*---------------------------------------------------------------*/
 /*--- end                                 host_generic_regs.c ---*/

@@ -102,7 +102,7 @@ void ppHRegX86 ( HReg reg )
      = { "%eax", "%ecx", "%edx", "%ebx", "%esp", "%ebp", "%esi", "%edi" };
    /* Be generic for all virtual regs. */
    if (hregIsVirtual(reg)) {
-      ppHReg(reg);
+      ppHRegGENERIC(reg);
       return;
    }
    /* But specific for real regs. */

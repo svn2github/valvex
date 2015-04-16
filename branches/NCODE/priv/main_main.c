@@ -347,8 +347,8 @@ UInt s390_host_hwcaps;
 
 /* FIXME BEGIN KLUDGE */
 /* This needs to be a virtual method call really. */
-static Bool isNCode ( AMD64Instr* i ) {
-   return i->tag == Ain_NCode;
+static Bool isNCode ( ARMInstr* i ) {
+   return i->tag == ARMin_NCode;
 }
 /* FIXME END KLUDGE */
 
@@ -1128,9 +1128,9 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
          if (UNLIKELY( AssemblyBuffer__getRemainingSize(&ab_hot) < 1024 )
              || UNLIKELY( AssemblyBuffer__getRemainingSize(&ab_cold) < 1024 ))
             goto outputBufferFull;
-         Bool ok = emit_AMD64NCodeBlock ( &ab_hot, &ab_cold, &rb, hi,
-                                          mode64, vta->archinfo_host.endness,
-                                          !!(vex_traceflags & VEX_TRACE_ASM));
+         Bool ok = emit_ARMNCodeBlock ( &ab_hot, &ab_cold, &rb, hi,
+                                        mode64, vta->archinfo_host.endness,
+                                        !!(vex_traceflags & VEX_TRACE_ASM));
          if (!ok)
             goto outputBufferFull;
       }

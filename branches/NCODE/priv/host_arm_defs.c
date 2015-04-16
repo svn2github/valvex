@@ -120,18 +120,9 @@ const RRegUniverse* getRRegUniverse_ARM ( void )
    // Note 9 is ambiguous: the base EABI does not give an e/r-saved
    // designation for it, but the Linux instantiation of the ABI
    // specifies it as callee-saved.
-   //
-   // If the set of available registers changes or if the e/r status
-   // changes, be sure to re-check/sync the definition of
-   // getHRegUsage for ARMInstr_Call too.
    ru->regs[ru->size++] = hregARM_R8();
    ru->regs[ru->size++] = hregARM_R12();
    ru->regs[ru->size++] = hregARM_R13();
-   ru->regs[ru->size++] = hregARM_R14();
-   ru->regs[ru->size++] = hregARM_R15();
-   ru->regs[ru->size++] = hregARM_Q13();
-   ru->regs[ru->size++] = hregARM_Q14();
-   ru->regs[ru->size++] = hregARM_Q15();
 
    rRegUniverse_ARM_initted = True;
 
@@ -140,11 +131,82 @@ const RRegUniverse* getRRegUniverse_ARM ( void )
 }
 
 
+/* Returns the registers in the ARM universe that are caller saved.
+   This is really ABI dependent, but we ignore that detail here. */
+static const RRegSet* getRRegsCallerSaved_ARM ( void )
+{
+   /* In theory gcc should be able to fold this into a single 64 bit
+      constant (bitset).  But that's a bit risky, so instead do
+      thread-unsafe lazy initialisation (sigh). */
+   static RRegSet callerSavedRegs;
+   static Bool    callerSavedRegs_initted = False;
+
+   if (LIKELY(callerSavedRegs_initted))
+      return &callerSavedRegs;
+
+   RRegSet__init(&callerSavedRegs, getRRegUniverse_ARM());
+
+   RRegSet__add(&callerSavedRegs, hregARM_R0());
+   RRegSet__add(&callerSavedRegs, hregARM_R1());
+   RRegSet__add(&callerSavedRegs, hregARM_R2());
+   RRegSet__add(&callerSavedRegs, hregARM_R3());
+   RRegSet__add(&callerSavedRegs, hregARM_Q8());
+   RRegSet__add(&callerSavedRegs, hregARM_Q9());
+   RRegSet__add(&callerSavedRegs, hregARM_Q10());
+   RRegSet__add(&callerSavedRegs, hregARM_Q11());
+   RRegSet__add(&callerSavedRegs, hregARM_Q12());
+   RRegSet__add(&callerSavedRegs, hregARM_R12());
+
+   callerSavedRegs_initted = True;
+   return &callerSavedRegs;
+}
+
+
+/* Returns the registers in the ARM universe that are callee saved.
+   This is really ABI dependent, but we ignore that detail here. */
+static const RRegSet* getRRegsCalleeSaved_ARM ( void )
+{
+   /* In theory gcc should be able to fold this into a single 64 bit
+      constant (bitset).  But that's a bit risky, so instead do
+      thread-unsafe lazy initialisation (sigh). */
+   static RRegSet calleeSavedRegs;
+   static Bool    calleeSavedRegs_initted = False;
+
+   if (LIKELY(calleeSavedRegs_initted))
+      return &calleeSavedRegs;
+
+   RRegSet__init(&calleeSavedRegs, getRRegUniverse_ARM());
+
+   RRegSet__add(&calleeSavedRegs, hregARM_R4());
+   RRegSet__add(&calleeSavedRegs, hregARM_R5());
+   RRegSet__add(&calleeSavedRegs, hregARM_R6());
+   RRegSet__add(&calleeSavedRegs, hregARM_R7());
+   RRegSet__add(&calleeSavedRegs, hregARM_R8());
+   RRegSet__add(&calleeSavedRegs, hregARM_R9());
+   RRegSet__add(&calleeSavedRegs, hregARM_R10());
+   RRegSet__add(&calleeSavedRegs, hregARM_R11());
+   RRegSet__add(&calleeSavedRegs, hregARM_D8());
+   RRegSet__add(&calleeSavedRegs, hregARM_D9());
+   RRegSet__add(&calleeSavedRegs, hregARM_D10());
+   RRegSet__add(&calleeSavedRegs, hregARM_D11());
+   RRegSet__add(&calleeSavedRegs, hregARM_D12());
+   RRegSet__add(&calleeSavedRegs, hregARM_S26());
+   RRegSet__add(&calleeSavedRegs, hregARM_S27());
+   RRegSet__add(&calleeSavedRegs, hregARM_S28());
+   RRegSet__add(&calleeSavedRegs, hregARM_S29());
+   RRegSet__add(&calleeSavedRegs, hregARM_S30());
+   RRegSet__add(&calleeSavedRegs, hregARM_R13());
+
+   calleeSavedRegs_initted = True;
+   return &calleeSavedRegs;
+}
+
+
 void ppHRegARM ( HReg reg )  {
    Int r;
    /* Be generic for all virtual regs. */
    if (hregIsVirtual(reg)) {
-      ppHReg(reg);
+      ppHRegGENERIC(reg);
       return;
    }
    /* But specific for real regs. */
@@ -1501,6 +1563,13 @@ static Bool fitsIn8x4 ( UInt* u8, UInt* u4, UInt u )
    return False;
 }
 
+/* Does a sign-extend of the lowest 8 bits give the original number? */
+static Bool fitsIn12bits ( UInt w32 )
+{
+   Int i32 = (Int)w32;
+   return toBool(i32 == ((Int)(w32 << 20) >> 20));
+}
+
 ARMInstr* ARMInstr_Add32 ( HReg rD, HReg rN, UInt imm32 ) {
    UInt u8, u4;
    ARMInstr *i = LibVEX_Alloc_inline(sizeof(ARMInstr));
@@ -1532,6 +1601,44 @@ ARMInstr* ARMInstr_EvCheck ( ARMAMode1* amCounter,
 ARMInstr* ARMInstr_ProfInc ( void ) {
    ARMInstr* i = LibVEX_Alloc_inline(sizeof(ARMInstr));
    i->tag      = ARMin_ProfInc;
+   return i;
+}
+
+ARMInstr* ARMInstr_NCode ( NCodeTemplate* tmpl, HReg* regsR,
+                               HReg* regsA, HReg* regsS ) {
+   HInstrNCode* details = LibVEX_Alloc_inline(sizeof(HInstrNCode));
+   details->tmpl        = tmpl;
+   details->regsR       = regsR;
+   details->regsA       = regsA;
+   details->regsS       = regsS;
+   details->rrLiveAfter = NULL;
+   ARMInstr* i = LibVEX_Alloc_inline(sizeof(ARMInstr));
+   i->tag                 = ARMin_NCode;
+   i->ARMin.NCode.details = details;
+   return i;
+}
+
+ARMInstr* ARMInstr_NC_Branch ( ARMCondCode cc )
+{
+   ARMInstr* i = LibVEX_Alloc_inline(sizeof(ARMInstr));
+   i->tag                = ARMin_NC_Branch;
+   i->ARMin.NC_Branch.cc = cc;
+   return i;
+}
+
+ARMInstr* ARMInstr_NC_Uxth  ( HReg dst, HReg src )
+{
+   ARMInstr* i = LibVEX_Alloc_inline(sizeof(ARMInstr));
+   i->tag               = ARMin_NC_Uxth;
+   i->ARMin.NC_Uxth.dst = dst;
+   i->ARMin.NC_Uxth.src = src;
+   return i;
+}
+
+ARMInstr* ARMInstr_NC_CallR12 ( void )
+{
+   ARMInstr* i = LibVEX_Alloc_inline(sizeof(ARMInstr));
+   i->tag      = ARMin_NC_CallR12;
    return i;
 }
 
@@ -1994,6 +2101,23 @@ void ppARMInstr ( const ARMInstr* i ) {
                     "adc r11,r11,$0; "
                     "str r11,[r12+4]");
          return;
+      case ARMin_NCode:
+         HInstrNCode__show(i->ARMin.NCode.details, ppHRegARM, "ARM");
+         return;
+      case ARMin_NC_Branch:
+         vex_printf("b%s simm24",
+                    i->ARMin.NC_Branch.cc == ARMcc_AL
+                       ? "" : showARMCondCode(i->ARMin.NC_Branch.cc));
+         return;
+      case ARMin_NC_Uxth:
+         vex_printf("uxth  ");
+         ppHRegARM(i->ARMin.NC_Uxth.dst);
+         vex_printf(", ");
+         ppHRegARM(i->ARMin.NC_Uxth.src);
+         break;
+      case ARMin_NC_CallR12:
+         vex_printf("blx   r12");
+         break;
       default:
          vex_printf("ppARMInstr: unhandled case (tag %d)", (Int)i->tag);
          vpanic("ppARMInstr(1)");
@@ -2096,13 +2220,8 @@ void getRegUsage_ARMInstr ( HRegUsage* u, const ARMInstr* i, Bool mode64 )
          /* This is a bit subtle. */
          /* First off, claim it trashes all the caller-saved regs
             which fall within the register allocator's jurisdiction.
-            These I believe to be r0,1,2,3.  If it turns out that r9
-            is also caller-saved, then we'll have to add that here
-            too. */
-         addHRegUse(u, HRmWrite, hregARM_R0());
-         addHRegUse(u, HRmWrite, hregARM_R1());
-         addHRegUse(u, HRmWrite, hregARM_R2());
-         addHRegUse(u, HRmWrite, hregARM_R3());
+            These I believe to be r0,1,2,3 and q8,9,10,11,12. */
+         addHRegUse_from_RRegSet(u, HRmWrite, getRRegsCallerSaved_ARM());
          /* Now we have to state any parameter-carrying registers
             which might be read.  This depends on nArgRegs. */
          switch (i->ARMin.Call.nArgRegs) {
@@ -2303,6 +2422,9 @@ void getRegUsage_ARMInstr ( HRegUsage* u, const ARMInstr* i, Bool mode64 )
          addHRegUse(u, HRmWrite, hregARM_R12());
          addHRegUse(u, HRmWrite, hregARM_R11());
          return;
+      case ARMin_NCode:
+         HInstrNCode__getRegUsage(u, i->ARMin.NCode.details);
+         return;
       default:
          ppARMInstr(i);
          vpanic("getRegUsage_ARMInstr");
@@ -2499,6 +2621,9 @@ void mapRegs_ARMInstr ( HRegRemap* m, ARMInstr* i, Bool mode64 )
       case ARMin_ProfInc:
          /* hardwires r11 and r12 -- nothing to modify. */
          return;
+      case ARMin_NCode:
+         HInstrNCode__mapRegs(i->ARMin.NCode.details, m);
+         return;
       default:
          ppARMInstr(i);
          vpanic("mapRegs_ARMInstr");
@@ -2560,46 +2685,49 @@ void genSpill_ARM ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
    vassert(offsetB >= 0);
    vassert(!hregIsVirtual(rreg));
    vassert(mode64 == False);
-   vassert(!spRel);
    *i1 = *i2 = NULL;
+
+   /* We're spilling/reloading either relative to the guest state
+      pointer (r8) when spRel == False, or relative to the stack
+      pointer (r13) when spRel == True. */
+   HReg base = spRel ? hregARM_R13() : hregARM_R8();
+
    rclass = hregClass(rreg);
    switch (rclass) {
       case HRcInt32:
          vassert(offsetB <= 4095);
          *i1 = ARMInstr_LdSt32( ARMcc_AL, False/*!isLoad*/, 
                                 rreg, 
-                                ARMAMode1_RI(hregARM_R8(), offsetB) );
+                                ARMAMode1_RI(base, offsetB) );
          return;
       case HRcFlt32:
       case HRcFlt64: {
-         HReg r8   = hregARM_R8();  /* baseblock */
-         HReg r12  = hregARM_R12(); /* spill temp */
-         HReg base = r8;
+         HReg curr = base;
          vassert(0 == (offsetB & 3));
          if (offsetB >= 1024) {
-            Int offsetKB = offsetB / 1024;
-            /* r12 = r8 + (1024 * offsetKB) */
-            *i1 = ARMInstr_Alu(ARMalu_ADD, r12, r8,
+            Int  offsetKB = offsetB / 1024;
+            HReg r12      = hregARM_R12(); /* spill temp */
+            /* r12 = base + (1024 * offsetKB) */
+            *i1 = ARMInstr_Alu(ARMalu_ADD, r12, base,
                                ARMRI84_I84(offsetKB, 11));
             offsetB -= (1024 * offsetKB);
-            base = r12;
+            curr = r12;
          }
          vassert(offsetB <= 1020);
          if (rclass == HRcFlt32) {
             *i2 = ARMInstr_VLdStS( False/*!isLoad*/,
                                    rreg,
-                                   mkARMAModeV(base, offsetB) );
+                                   mkARMAModeV(curr, offsetB) );
          } else {
             *i2 = ARMInstr_VLdStD( False/*!isLoad*/,
                                    rreg,
-                                   mkARMAModeV(base, offsetB) );
+                                   mkARMAModeV(curr, offsetB) );
          }
          return;
       }
       case HRcVec128: {
-         HReg r8  = hregARM_R8();
          HReg r12 = hregARM_R12();
-         *i1 = ARMInstr_Add32(r12, r8, offsetB);
+         *i1 = ARMInstr_Add32(r12, base, offsetB);
          *i2 = ARMInstr_NLdStQ(False, rreg, mkARMAModeN_R(r12));
          return;
       }
@@ -2616,46 +2744,47 @@ void genReload_ARM ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
    vassert(offsetB >= 0);
    vassert(!hregIsVirtual(rreg));
    vassert(mode64 == False);
-   vassert(!spRel);
    *i1 = *i2 = NULL;
+
+   /* Same comment as on genSpill_ARM. */
+   HReg base = spRel ? hregARM_R13() : hregARM_R8();
+
    rclass = hregClass(rreg);
    switch (rclass) {
       case HRcInt32:
          vassert(offsetB <= 4095);
          *i1 = ARMInstr_LdSt32( ARMcc_AL, True/*isLoad*/, 
                                 rreg, 
-                                ARMAMode1_RI(hregARM_R8(), offsetB) );
+                                ARMAMode1_RI(base, offsetB) );
          return;
       case HRcFlt32:
       case HRcFlt64: {
-         HReg r8   = hregARM_R8();  /* baseblock */
-         HReg r12  = hregARM_R12(); /* spill temp */
-         HReg base = r8;
+         HReg curr = base;
          vassert(0 == (offsetB & 3));
          if (offsetB >= 1024) {
-            Int offsetKB = offsetB / 1024;
-            /* r12 = r8 + (1024 * offsetKB) */
-            *i1 = ARMInstr_Alu(ARMalu_ADD, r12, r8,
+            Int  offsetKB = offsetB / 1024;
+            HReg r12      = hregARM_R12(); /* spill temp */
+            /* r12 = base + (1024 * offsetKB) */
+            *i1 = ARMInstr_Alu(ARMalu_ADD, r12, base,
                                ARMRI84_I84(offsetKB, 11));
             offsetB -= (1024 * offsetKB);
-            base = r12;
+            curr = r12;
          }
          vassert(offsetB <= 1020);
          if (rclass == HRcFlt32) {
             *i2 = ARMInstr_VLdStS( True/*isLoad*/,
                                    rreg,
-                                   mkARMAModeV(base, offsetB) );
+                                   mkARMAModeV(curr, offsetB) );
          } else {
             *i2 = ARMInstr_VLdStD( True/*isLoad*/,
                                    rreg,
-                                   mkARMAModeV(base, offsetB) );
+                                   mkARMAModeV(curr, offsetB) );
          }
          return;
       }
       case HRcVec128: {
-         HReg r8  = hregARM_R8();
          HReg r12 = hregARM_R12();
-         *i1 = ARMInstr_Add32(r12, r8, offsetB);
+         *i1 = ARMInstr_Add32(r12, base, offsetB);
          *i2 = ARMInstr_NLdStQ(True, rreg, mkARMAModeN_R(r12));
          return;
       }
@@ -2668,13 +2797,15 @@ void genReload_ARM ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
 
 /* --------- The arm32 assembler (bleh.) --------- */
 
-#define PUT(_ab, _word32)                                \
-   do { const UInt _off      = (_ab)->bufUsed;           \
-        (_ab)->buf[_off + 0] = ((_word32) >> 0)  & 0xFF; \
-        (_ab)->buf[_off + 1] = ((_word32) >> 8)  & 0xFF; \
-        (_ab)->buf[_off + 2] = ((_word32) >> 16) & 0xFF; \
-        (_ab)->buf[_off + 3] = ((_word32) >> 24) & 0xFF; \
-        (_ab)->bufUsed       = _off + 4;                 \
+/* Put a 32 bit word into the assembler buffer |_ab|.  Uses a
+   potentially unaligned 32-bit store.  That is OK because the
+   allocation point of the buffer should always be 32-bit aligned, and
+   that is asserted for at the top of emit_ARMInstr. */
+#define PUT(_ab, _word32)                         \
+   do { const UInt _off = (_ab)->bufUsed;         \
+        UInt* _ptr = (UInt*)(&(_ab)->buf[_off]);  \
+        *_ptr = (_word32);                        \
+        (_ab)->bufUsed = _off + 4;                \
    } while (0)
 
 /* Emit an instruction into buf and return the number of bytes used.
@@ -3111,8 +3242,15 @@ Bool emit_ARMInstr ( /*MOD*/AssemblyBuffer* ab,
             PUT(ab, instr);
             goto done;
          } else {
-            // RR case
-            goto bad;
+            UInt sh5 = am->ARMam1.RRS.shift;
+            UInt nn  = iregEnc(am->ARMam1.RRS.base);
+            UInt mm  = iregEnc(am->ARMam1.RRS.index);
+            UInt dd  = iregEnc(rD);
+            if (sh5 > 3) goto bad;           
+            UInt instr = XXXXXXXX(cc, X0111, BITS4(1,bB,0,bL), nn, dd,
+                                  ((sh5 >> 1) & 0xF), ((sh5 & 1) << 3), mm);
+            PUT(ab, instr);
+            goto done;
          }
       }
       case ARMin_LdSt16: {
@@ -4670,6 +4808,32 @@ Bool emit_ARMInstr ( /*MOD*/AssemblyBuffer* ab,
          goto done;
       }
 
+      case ARMin_NC_Branch: {
+         /* Generating jumps within NCode blocks.  We don't know what the
+            jump offset yet is, so just put in a 24-bit zero.  The NCode
+            assembler (emit_ARMNInstr) should also have generated a
+            Relocation that describes how to fix up the offset, and that
+            will be applied after assembly is complete, at the point
+            where the hot and cold buffers are concatenated, to create on
+            single big code block for the containing IRSB. */
+         ARMCondCode cc = i->ARMin.NC_Branch.cc;
+         vassert(cc <= ARMcc_AL);
+         PUT(ab, XX______(cc, 0xA/*1010b*/));
+         goto done;
+      }
+
+      case ARMin_NC_Uxth: {
+         UInt dd = iregEnc(i->ARMin.NC_Uxth.dst);
+         UInt mm = iregEnc(i->ARMin.NC_Uxth.src);
+         PUT(ab, XXXXXXXX(ARMcc_AL, X0110, X1111, X1111, dd, X0000, X0111, mm));
+         goto done;
+      }
+
+      case ARMin_NC_CallR12: {
+         PUT(ab, 0xE12FFF3C);
+         goto done;
+      }
+
       /* ... */
       default: 
          goto bad;
@@ -4683,6 +4847,330 @@ Bool emit_ARMInstr ( /*MOD*/AssemblyBuffer* ab,
   done:
    vassert(AssemblyBuffer__getCursor(ab) - initialCursor <= 32);
    return is_profInc;
+}
+
+
+/* --------- The arm NCode assembler. --------- */
+
+/* Emits ARM code for a single NInstr |ni| into |ab|, possibly
+   adding relocation information into |rb| too.
+*/
+static
+void emit_ARMNInstr ( /*MOD*/AssemblyBuffer* ab,
+                      /*MOD*/RelocationBuffer* rb,
+                      const NInstr* ni,
+                      const NRegMap* nregMap,
+                      const RRegSet* hregsLiveAfter,
+                      /* the next 2 are for debug printing only */
+                      Bool verbose, NLabel niLabel )
+{
+   ARMInstr* hiBuf[100];
+   UInt      hiBufUsed = 0;
+
+#  define HI(_insnE) \
+      do { \
+         ARMInstr* _insn = (_insnE); \
+         vassert(hiBufUsed < sizeof(hiBuf)/sizeof(hiBuf[0])); \
+         hiBuf[hiBufUsed++] = _insn; \
+      } while (0)
+
+   if (verbose) {
+      vex_printf("   ");
+      ppNLabel(niLabel);
+      vex_printf(":  ");
+      ppNInstr(ni);
+      vex_printf("\n");
+   }
+
+   switch (ni->tag) {
+
+      case Nin_Nop:
+         break;
+
+      case Nin_Branch: {
+         /* We are going to generate an ARM branch insn, which naturally
+            can be conditional if neeed.  It will be of the form 
+              cond:4 1010 simm:24
+            We need to generate both the instruction and a relocation
+            record that describes how to fix up the offset (simm:24)
+            once the relative offset between this instruction and the
+            destination is known, which is isn't currently. */
+         ARMCondCode cc = 16; /* invalid */
+         switch (ni->Nin.Branch.cc) {
+            case Ncc_ALWAYS: cc = ARMcc_AL; break;
+            case Ncc_Z:      cc = ARMcc_EQ; break;
+            case Ncc_NZ:     cc = ARMcc_NE; break;
+            default: vassert(0); /* no other cases possible */
+         }
+         vassert(cc < 16);
+         /* First do the relocation, as it's the more complex part.
+            The insns are little-endian, and the offset is the least
+            significant 3 bytes of the insn, so its "where" starts
+            exactly where the current |ab| cursor is.  Hence the "+0"
+            below. */
+         RelocWhere where
+            = mkRelocWhere(niLabel.zone, AssemblyBuffer__getNext(ab)+0);
+         RelocDst dst
+            = mkRelocDst_from_NLabel(ni->Nin.Branch.dst);
+         /* Bias is 8 because we've set |where| to be the start of the
+            branch insn.  The processor however expects the offset to
+            be relative to the start of 8 bytes past the insn (ARM
+            ancient history) which means that a naive "dst - where"
+            value will give an offset that is 8 too large.  Hence the
+            bias of 8. */
+         Relocation reloc
+            = mkRelocation(where, 0, 23, dst, /*bias*/-8, /*rshift*/2);
+         vassert(RelocationBuffer__getRemainingSize(rb) > 0);
+         rb->buf[rb->bufUsed++] = reloc;
+         /* And finally the instruction.  Note that we don't specify
+            an offset here since we don't yet know what it is. */
+         HI( ARMInstr_NC_Branch(cc) );
+         break;
+      }
+
+      case Nin_Call: {
+         RRegSet to_preserve;
+         calcRegistersToPreserveAroundNCodeCall(
+            &to_preserve,
+            hregsLiveAfter, getRRegsCalleeSaved_ARM(), nregMap,
+            ni->Nin.Call.resHi, ni->Nin.Call.resLo
+         );
+
+         /* Save live regs */
+         UInt n_to_preserve = RRegSet__card(&to_preserve);
+         vassert(n_to_preserve < 25); /* stay sane */
+
+         /* Figure out how much to move the stack, ensuring any alignment up
+            to 32 is preserved. */
+         UInt stackMove = n_to_preserve * 16;
+         stackMove = (stackMove + 31) & ~31;
+         if (stackMove > 0) {
+           /* This is a bit tricky.  We need to encode the offset in
+              an RI84, but it might be moderately large-ish.
+              Fortunately we can take advantage of the fact that
+              |stackMove| is 0 % 16 and so encode just bits 11:4 of
+              it. */
+            vassert((stackMove & 15) == 0);
+            if ((stackMove >> 4) > 0xFF) goto unhandled;
+            HReg     sp   = hregARM_R13();
+            ARMRI84* dist = ARMRI84_I84(stackMove >> 4, 14/*means "<< 4"*/);
+            HI( ARMInstr_Alu(ARMalu_SUB, sp, sp, dist) );
+         }
+
+         RRegSetIterator* iter = RRegSetIterator__new();
+         RRegSetIterator__init(iter, &to_preserve);
+         UInt slotNo = 0;
+         while (True) {
+            HReg r = RRegSetIterator__next(iter);
+            if (hregIsInvalid(r)) break;
+            ARMInstr* i1 = NULL;
+            ARMInstr* i2 = NULL;
+            genSpill_ARM( (HInstr**)&i1, (HInstr**)&i2,
+                          r, True/*spRel*/, 16 * slotNo, False/*!mode64*/ );
+            if (i1) HI(i1);
+            if (i2) HI(i2);
+            slotNo++;
+         }
+         vassert(slotNo == n_to_preserve);
+
+         /* Marshall args for the call, do the call, marshal the result */
+         /* Case: 1 arg reg, 1 result reg */
+
+         UInt nArgRegs = nregVecLen(ni->Nin.Call.argRegs);
+
+         if (nArgRegs == 1
+             && isNRegINVALID(ni->Nin.Call.resHi) 
+             && !isNRegINVALID(ni->Nin.Call.resLo)) {
+
+            HReg arg1 = mapNReg(nregMap, ni->Nin.Call.argRegs[0]);
+            HReg res1 = mapNReg(nregMap, ni->Nin.Call.resLo);
+            HReg r0   = hregARM_R0();
+            if (!sameHReg(r0, arg1))
+               HI( mk_iMOVds_RR_ARM(r0, arg1) );
+
+            HReg r12 = hregARM_R12();
+            HI( ARMInstr_Imm32(r12, (UInt)(HWord)ni->Nin.Call.entry) );
+            HI( ARMInstr_NC_CallR12() );
+
+            if (!sameHReg(res1, r0))
+              HI( mk_iMOVds_RR_ARM(res1, r0) );
+         } else {
+            goto unhandled;
+         }
+
+         /* Restore live regs */
+         RRegSetIterator__init(iter, &to_preserve);
+         slotNo = 0;
+         while (True) {
+            HReg r = RRegSetIterator__next(iter);
+            if (hregIsInvalid(r)) break;
+            ARMInstr* i1 = NULL;
+            ARMInstr* i2 = NULL;
+            genReload_ARM( (HInstr**)&i1, (HInstr**)&i2,
+                           r, True/*spRel*/, 16 * slotNo, False/*!mode64*/ );
+            if (i1) HI(i1);
+            if (i2) HI(i2);
+            slotNo++;
+         }
+         vassert(slotNo == n_to_preserve);
+         if (stackMove > 0) {
+            /* Same deal as the code for moving SP down, just above
+               .. see comments there. */
+            HReg     sp   = hregARM_R13();
+            ARMRI84* dist = ARMRI84_I84(stackMove >> 4, 14/*means "<< 4"*/);
+            HI( ARMInstr_Alu(ARMalu_ADD, sp, sp, dist) );
+         }
+         break;
+      }
+
+      case Nin_ImmW: {
+         HReg  reg = mapNReg(nregMap, ni->Nin.ImmW.dst);
+         HWord imm = ni->Nin.ImmW.imm;
+         HI( ARMInstr_Imm32(reg, (UInt)imm) );
+         break;
+      }
+
+      case Nin_ShiftWri: {
+         NShift how = ni->Nin.ShiftWri.how;
+         UInt   amt = ni->Nin.ShiftWri.amt;
+         HReg   src = mapNReg(nregMap, ni->Nin.ShiftWri.srcL);
+         HReg   dst = mapNReg(nregMap, ni->Nin.ShiftWri.dst);
+         vassert(amt >= 1 && amt <= 31);
+
+         ARMShiftOp shOp = 0;
+         switch (how) {
+            //case Nsh_SHL: shOp = ARMsh_SHL; break;
+            case Nsh_SHR: shOp = ARMsh_SHR; break;
+            default: break;
+         }
+         vassert(shOp != 0);
+
+         HI( ARMInstr_Shift(shOp, dst, src, ARMRI5_I5(amt)) );
+         break;
+      }
+
+      case Nin_ShiftWrr:
+         goto unhandled;
+
+      case Nin_AluWri: {
+         NAlu  how   = ni->Nin.AluWri.how;
+         HReg  dstR  = mapNReg(nregMap, ni->Nin.AluWri.dst);
+         HReg  srcLR = mapNReg(nregMap, ni->Nin.AluWri.srcL);
+         HWord imm   = ni->Nin.AluWri.srcR;
+         if (how == Nalu_AND && imm == 0xFFFFULL) {
+            HI( ARMInstr_NC_Uxth(dstR, srcLR) );
+            break;
+         }
+         goto unhandled;
+      }
+
+      case Nin_AluWrr:
+         goto unhandled;
+
+      case Nin_SetFlagsWri: {
+         HReg  reg = mapNReg(nregMap, ni->Nin.SetFlagsWri.srcL);
+         HWord imm = ni->Nin.SetFlagsWri.srcR;
+         if (ni->Nin.SetFlagsWri.how == Nsf_TEST && imm <= 0xFF) {
+            HI( ARMInstr_CmpOrTst(False/*!isCmp*/, reg, ARMRI84_I84(imm,0)) );
+            break;
+         }
+         if (ni->Nin.SetFlagsWri.how == Nsf_CMP && imm <= 0xFF) {
+            HI( ARMInstr_CmpOrTst(True/*isCmp*/, reg, ARMRI84_I84(imm,0)) );
+            break;
+         }
+         goto unhandled;
+      }
+
+      case Nin_MovW: {
+         HReg src = mapNReg(nregMap, ni->Nin.MovW.src);
+         HReg dst = mapNReg(nregMap, ni->Nin.MovW.dst);
+         HI( mk_iMOVds_RR_ARM(dst, src) );
+         break;
+      }
+
+      case Nin_LoadU: {
+         HReg  dstR = mapNReg(nregMap, ni->Nin.LoadU.dst);
+         NEA*  addr = ni->Nin.LoadU.addr;
+         UChar szB  = ni->Nin.LoadU.szB;
+         /* The Nea_IRS case is a kludge.  It would be better to
+            generate a single instruction, but that requires a new
+            AMDAMode_IRS, which doesn't currently exist. */
+         if (addr->tag == Nea_IRS && !fitsIn12bits((UInt)addr->Nea.IRS.base)) {
+            UInt  imm    = (UInt)addr->Nea.IRS.base;
+            HReg  indexR = mapNReg(nregMap, addr->Nea.IRS.index);
+            UChar shift  = addr->Nea.IRS.shift;
+            if (szB == 4 && shift <= 3) {
+               /* Put the immediate value in r12, since that's
+                  reserved as very-short-term scratch. */
+               HReg r12 = hregARM_R12();
+               HI( ARMInstr_Imm32(r12, imm) );
+               HI( ARMInstr_LdSt32(ARMcc_AL, True/*isLoad*/, dstR,
+                                   ARMAMode1_RRS(r12, indexR, shift)) );
+               break;
+            }
+         }
+         if (addr->tag == Nea_RRS) {
+            HReg  baseR  = mapNReg(nregMap, addr->Nea.RRS.base);
+            HReg  indexR = mapNReg(nregMap, addr->Nea.RRS.index);
+            UChar shift  = addr->Nea.RRS.shift;
+            if (szB == 1 && shift <= 3) {
+               HI( ARMInstr_LdSt8U(ARMcc_AL, True/*isLoad*/, dstR,
+                                   ARMAMode1_RRS(baseR, indexR, shift)) );
+               break;
+            }
+         }
+         goto unhandled;
+      }
+
+      case Nin_Store:
+         goto unhandled;
+
+      default:
+         goto unhandled;
+   }
+
+   for (UInt i = 0; i < hiBufUsed; i++) {
+      if (verbose) {
+         vex_printf("              ");
+         ppARMInstr(hiBuf[i]);
+         vex_printf("\n");
+      }  
+      Bool isProfInc
+         = emit_ARMInstr(ab, hiBuf[i],
+                         False/*!mode64*/, VexEndnessLE, NULL/*vda*/);
+      vassert(!isProfInc);
+   }
+
+   return;
+
+  unhandled:
+   ppNInstr(ni);
+   vpanic("emit_ARMNInstr: unhandled NInstr");
+   /*NOTREACHED*/
+
+#  undef HI
+}
+
+
+/* Emits ARM code for the complete NCode block |hi| into |ab_hot|
+   and |ab_cold|, possibly adding relocation information to |rb| too.
+   This function can only handle NCode blocks.  All other ARM
+   instructions are to be handled by emit_ARMInstr.  This function
+   is required to generate <= 1024 bytes of code.  Returns True if OK,
+   False if not enough buffer space.
+*/
+Bool emit_ARMNCodeBlock ( /*MOD*/AssemblyBuffer*   ab_hot,
+                          /*MOD*/AssemblyBuffer*   ab_cold,
+                          /*MOD*/RelocationBuffer* rb,
+                          const ARMInstr*        hi,
+                          Bool mode64, VexEndness endness_host,
+                          Bool verbose )
+{
+   vassert(mode64       == False);
+   vassert(endness_host == VexEndnessLE);
+   vassert(hi->tag      == ARMin_NCode);
+   return HInstrNCode__emit ( ab_hot, ab_cold, rb, hi->ARMin.NCode.details,
+                              verbose, emit_ARMNInstr );
 }
 
 

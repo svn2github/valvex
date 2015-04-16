@@ -286,6 +286,12 @@ static ARMInstr* mk_iMOVds_RR ( HReg dst, HReg src )
    return ARMInstr_Mov(dst, ARMRI84_R(src));
 }
 
+/* And a variant that is exported into the global namespace. */
+ARMInstr* mk_iMOVds_RR_ARM ( HReg dst, HReg src )
+{
+   return mk_iMOVds_RR(dst, src);
+}
+
 /* Set the VFP unit's rounding mode to default (round to nearest). */
 static void set_VFP_rounding_default ( ISelEnv* env )
 {
@@ -6223,6 +6229,48 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
 
       /* Do we ever expect to see any other kind? */
       goto stmt_fail;
+   }
+
+   /* --------- NCODE --------- */
+   case Ist_NCode: {
+      UInt i;
+      NCodeTemplate* tmpl = stmt->Ist.NCode.tmpl;
+
+      // For the result values, find the vregs associated with the
+      // result IRTemps, and pin them on the NCode block.
+      HReg* regsR = LibVEX_Alloc_inline( (tmpl->nres+1) * sizeof(HReg) );
+      for (i = 0; i < tmpl->nres; i++) {
+         IRTemp t = stmt->Ist.NCode.ress[i];
+         vassert(t != IRTemp_INVALID);
+         regsR[i] = lookupIRTemp(env, t);
+      }
+      regsR[tmpl->nres] = HReg_INVALID;
+
+      // Compute each arg into a new vreg.  It's important to move
+      // them into new vregs because the NCode block may modify its
+      // argument registers, but the Rules Of The Game stipulate that
+      // registers returned from the isel*Expr functions may not be
+      // modified.  As usual vreg-vreg move coalescing will remove
+      // those copies in the cases where they are not necessary.
+      HReg* regsA = LibVEX_Alloc_inline( (tmpl->narg+1) * sizeof(HReg) );
+      for (i = 0; i < tmpl->narg; i++) {
+         HReg arg = iselIntExpr_R(env, stmt->Ist.NCode.args[i]);
+         regsA[i] = newVRegI(env);
+         addInstr(env, mk_iMOVds_RR(regsA[i], arg));
+      }
+      regsA[tmpl->narg] = HReg_INVALID;
+
+      // Allocate vregs for the scratch values.
+      HReg* regsS = LibVEX_Alloc_inline( (tmpl->nscr+1) * sizeof(HReg) );
+      for (i = 0; i < tmpl->nscr; i++) {
+         regsS[i] = newVRegI(env);
+      }
+      regsS[tmpl->nscr] = HReg_INVALID;
+
+      // Hand the template and 3 reg sets on through the pipeline.
+      addInstr(env, ARMInstr_NCode(tmpl, regsR, regsA, regsS));
+
+      return;
    }
 
    default: break;

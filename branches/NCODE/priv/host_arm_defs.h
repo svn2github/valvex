@@ -74,11 +74,6 @@ ST_IN HReg hregARM_Q12 ( void ) { return mkHReg(False, HRcVec128, 12, 25); }
 ST_IN HReg hregARM_R8  ( void ) { return mkHReg(False, HRcInt32,  8,  26); }
 ST_IN HReg hregARM_R12 ( void ) { return mkHReg(False, HRcInt32,  12, 27); }
 ST_IN HReg hregARM_R13 ( void ) { return mkHReg(False, HRcInt32,  13, 28); }
-ST_IN HReg hregARM_R14 ( void ) { return mkHReg(False, HRcInt32,  14, 29); }
-ST_IN HReg hregARM_R15 ( void ) { return mkHReg(False, HRcInt32,  15, 30); }
-ST_IN HReg hregARM_Q13 ( void ) { return mkHReg(False, HRcVec128, 13, 31); }
-ST_IN HReg hregARM_Q14 ( void ) { return mkHReg(False, HRcVec128, 14, 32); }
-ST_IN HReg hregARM_Q15 ( void ) { return mkHReg(False, HRcVec128, 15, 33); }
 #undef ST_IN
 
 extern void ppHRegARM ( HReg );
@@ -618,7 +613,12 @@ typedef
          NOTE: source and destination registers should be different! */
       ARMin_Add32,
       ARMin_EvCheck,     /* Event check */
-      ARMin_ProfInc      /* 64-bit profile counter increment */
+      ARMin_ProfInc,     /* 64-bit profile counter increment */
+      ARMin_NCode,       /* NCode template and registers */
+      // The following for NCode only
+      ARMin_NC_Branch,   /* Conditional or unconditional branch, imm offset */
+      ARMin_NC_Uxth,     /* extend u16 to u32 */
+      ARMin_NC_CallR12   /* Literally "bl r12" */
    }
    ARMInstrTag;
 
@@ -953,6 +953,23 @@ typedef
                installed later, post-translation, by patching it in,
                as it is not known at translation time. */
          } ProfInc;
+         struct {
+            /* Out of line so as to keep this ARMInstr small. */
+            HInstrNCode* details;
+         } NCode;
+         /* --- for NCode only --- */
+         struct {
+            /* cond. br. w/ 24-bit offset,  cond:4 1010 imm:24 */
+            /* imm24 is unspecified and so assumed to be zero. */
+            ARMCondCode cc;
+         } NC_Branch;
+        struct {
+           HReg dst;
+           HReg src;
+        } NC_Uxth;
+         struct {
+            /* Literally "bl r12" */
+         } NC_CallR12;
       } ARMin;
    }
    ARMInstr;
@@ -1018,9 +1035,16 @@ extern ARMInstr* ARMInstr_Add32    ( HReg rD, HReg rN, UInt imm32 );
 extern ARMInstr* ARMInstr_EvCheck  ( ARMAMode1* amCounter,
                                      ARMAMode1* amFailAddr );
 extern ARMInstr* ARMInstr_ProfInc  ( void );
+extern ARMInstr* ARMInstr_NCode    ( NCodeTemplate* tmpl, HReg* regsR,
+                                     HReg* regsA, HReg* regsS );
+extern ARMInstr* ARMInstr_NC_Branch ( ARMCondCode cc );
+extern ARMInstr* ARMInstr_NC_Uxth  ( HReg dst, HReg src );
+extern ARMInstr* ARMInstr_NC_CallR12 ( void );
 
 extern void ppARMInstr ( const ARMInstr* );
 
+/* Handy helper, for generating integer reg-reg moves. */
+extern ARMInstr* mk_iMOVds_RR_ARM ( HReg dst, HReg src );
 
 /* Some functions that insulate the register allocator from details
    of the underlying instruction set. */
@@ -1032,6 +1056,13 @@ extern Bool emit_ARMInstr ( /*MOD*/AssemblyBuffer* ab,
                             const ARMInstr* i, 
                             Bool mode64, VexEndness endness_host,
                             const VexDispatcherAddresses* vda );
+
+extern Bool emit_ARMNCodeBlock ( /*MOD*/AssemblyBuffer*   ab_hot,
+                                 /*MOD*/AssemblyBuffer*   ab_cold,
+                                 /*MOD*/RelocationBuffer* rb,
+                                 const ARMInstr*          hi,
+                                 Bool mode64, VexEndness endness_host,
+                                 Bool verbose );
 
 extern void genSpill_ARM  ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                             HReg rreg, Bool spRel, Int offset, Bool );

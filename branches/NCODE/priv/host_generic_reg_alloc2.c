@@ -40,7 +40,7 @@
 #include "host_generic_regs.h"
 
 // ******** WARNING KLUDGE DO NOT COMMIT
-#include "host_amd64_defs.h"
+#include "host_arm_defs.h"
 // ******** WARNING KLUDGE DO NOT COMMIT
 
 /* Set to 1 for lots of debugging output. */
@@ -1309,7 +1309,8 @@ HInstrArray* doRegisterAllocation (
 
             reloaded = directReload ( instrs_in->arr[ii], cand, spilloff );
             if (debug_direct_reload && !reloaded) {
-               vex_printf("[%3d] ", spilloff); ppHReg(cand); vex_printf(" "); 
+               vex_printf("[%3d] ", spilloff); 
+               ppHRegGENERIC(cand); vex_printf(" "); 
                ppInstr(instrs_in->arr[ii], mode64); 
             }
             if (reloaded) {
@@ -1596,9 +1597,9 @@ HInstrArray* doRegisterAllocation (
 
       /* If this instruction is an NCode block, annotate it with the
          set of registers that are live after it. */
-      { AMD64Instr* ai = instrs_in->arr[ii];
-        if (ai->tag == Ain_NCode) {
-           AMD64InstrNCode* details = ai->Ain.NCode.details;
+      { ARMInstr* ai = instrs_in->arr[ii];
+        if (ai->tag == ARMin_NCode) {
+           HInstrNCode* details = ai->ARMin.NCode.details;
            //vex_printf("RA: after NCode: ");
            vassert(details->rrLiveAfter == NULL);
            RRegSet* rrLive_after_NCode = RRegSet__new(univ);

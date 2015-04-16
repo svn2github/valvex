@@ -164,7 +164,8 @@ void ppNInstr ( const NInstr* ni )
             ppNReg(ni->Nin.Call.resLo);
             vex_printf(" = ");
          }
-         vex_printf("%s[%llx](", ni->Nin.Call.name, (ULong)ni->Nin.Call.entry);
+         vex_printf("%s[%llx](", ni->Nin.Call.name,
+                    (ULong)(HWord)ni->Nin.Call.entry);
          for (i = 0; !isNRegINVALID(ni->Nin.Call.argRegs[i]); i++) {
             if (i > 0) vex_printf(",");
             ppNReg(ni->Nin.Call.argRegs[i]);

@@ -126,7 +126,7 @@ extern void ppHRegClass ( HRegClass );
 
 
 /* Print an HReg in a generic (non-target-specific) way. */
-extern void ppHReg ( HReg );
+extern void ppHRegGENERIC ( HReg );
 
 /* Construct.  The goal here is that compiler can fold this down to a
    constant in the case where the four arguments are constants, which
@@ -393,9 +393,9 @@ typedef
    }
    HRegRemap;
 
-extern void ppHRegRemap     ( HRegRemap* );
+extern void ppHRegRemap     ( const HRegRemap* );
 extern void addToHRegRemap  ( HRegRemap*, HReg, HReg );
-extern HReg lookupHRegRemap ( HRegRemap*, HReg );
+extern HReg lookupHRegRemap ( const HRegRemap*, HReg );
 
 static inline void initHRegRemap ( HRegRemap* map )
 {
@@ -748,6 +748,40 @@ HInstrArray* doRegisterAllocation (
    an HReg_INVALID. */
 extern UInt hregVecLen ( const HReg* vec );
 
+/* Find the length of a vector of NRegs that is terminated by
+   an NReg_INVALID. */
+extern UInt nregVecLen ( const NReg* vec );
+
+/* Find the length of a vector of NInstr*s that is terminated by
+   NULL. */
+extern UInt ninstrVecLen ( NInstr** const vec );
+
+
+/* A structure that holds the details of an NCode block once it has
+   been converted (by isel) into a host-insn NCode block. */
+typedef
+   struct {
+      NCodeTemplate* tmpl;
+      HReg*          regsR; /* Result regs, INVALID_HREG terminated */
+      HReg*          regsA; /* Arg regs, ditto */
+      HReg*          regsS; /* Scratch regs, ditto */
+      RRegSet*       rrLiveAfter; /* initially NULL, filled in by RA */
+   }
+   HInstrNCode;
+
+/* Print a HInstrNCode.  Caller must supply a register-printing
+   routine and a bit of text identifying the host architecture. */
+extern void HInstrNCode__show ( const HInstrNCode* details,
+                                void (*ppHReg)(HReg), const HChar* hostName );
+
+/* Update |u| with the register usages of |details|. */
+extern void HInstrNCode__getRegUsage ( /*MOD*/HRegUsage* u,
+                                       const HInstrNCode* details );
+
+/* Apply |map| to the registers in |details|. */
+extern void HInstrNCode__mapRegs ( /*MOD*/HInstrNCode* details,
+                                   const HRegRemap* map );
+
 
 /* A handy structure to hold the register environment for an NCode
    block -- that is, the NReg to HReg mapping. */
@@ -778,6 +812,30 @@ void calcRegistersToPreserveAroundNCodeCall (
         NReg nregResHi,
         NReg nregResLo
      );
+
+/* Emits host code for the complete NCode block |details| into
+   |ab_hot| and |ab_cold|, possibly adding relocation information to
+   |rb| too.  The caller must supply a host-dependent function
+   |emit_OneNInstr| which generates host code for a single NInstr.
+   This function is required to generate <= 1024 bytes of code.
+   Returns True if OK, False if not enough buffer space.
+*/
+extern
+Bool HInstrNCode__emit (  /*MOD*/AssemblyBuffer*   ab_hot,
+                          /*MOD*/AssemblyBuffer*   ab_cold,
+                          /*MOD*/RelocationBuffer* rb,
+                         const HInstrNCode* details,
+                         Bool verbose,
+                         void (*emit_OneNInstr) (
+                            /*MOD*/AssemblyBuffer* ab,
+                            /*MOD*/RelocationBuffer* rb,
+                            const NInstr* ni,
+                            const NRegMap* nregMap,
+                            const RRegSet* hregsLiveAfter,
+                            /* the next 2 are for debug printing only */
+                            Bool verbose, NLabel niLabel
+                         )
+                       );
 
 
 #endif /* ndef __VEX_HOST_GENERIC_REGS_H */

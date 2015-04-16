@@ -420,18 +420,6 @@ typedef
 
 
 /* --------- */
-typedef
-   struct {
-      NCodeTemplate* tmpl;
-      HReg*          regsR; /* Result regs, INVALID_HREG terminated */
-      HReg*          regsA; /* Arg regs, ditto */
-      HReg*          regsS; /* Scratch regs, ditto */
-      RRegSet*       rrLiveAfter; /* initially NULL, filled in by RA */
-   }
-   AMD64InstrNCode;
-
-
-/* --------- */
 
 /* Destinations are on the RIGHT (second operand) */
 
@@ -737,7 +725,7 @@ typedef
          } ProfInc;
          struct {
             /* Out of line so as to keep sizeof(AMD64Instr) at 40. */
-            AMD64InstrNCode* details;
+            HInstrNCode* details;
          } NCode;
 
          /* --- for NCode only --- */
@@ -831,7 +819,7 @@ extern AMD64Instr* AMD64Instr_NC_TestQ   ( HReg src, HReg dst );
 extern void ppAMD64Instr ( const AMD64Instr*, Bool );
 
 /* Handy helper, for generating integer reg-reg moves. */
-extern AMD64Instr* mk_iMOVsd_RR ( HReg src, HReg dst );
+extern AMD64Instr* mk_iMOVsd_RR_AMD64 ( HReg src, HReg dst );
 
 /* Some functions that insulate the register allocator from details
    of the underlying instruction set. */

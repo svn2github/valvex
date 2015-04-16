@@ -311,11 +311,18 @@ static Bool isZeroU32 ( IRExpr* e )
 
 /* Make an int reg-reg move. */
 
-/*notstatic*/ AMD64Instr* mk_iMOVsd_RR ( HReg src, HReg dst )
+static AMD64Instr* mk_iMOVsd_RR ( HReg src, HReg dst )
 {
    vassert(hregClass(src) == HRcInt64);
    vassert(hregClass(dst) == HRcInt64);
    return AMD64Instr_Alu64R(Aalu_MOV, AMD64RMI_Reg(src), dst);
+}
+
+/* And a variant that is exported into the global namespace. */
+
+AMD64Instr* mk_iMOVsd_RR_AMD64 ( HReg src, HReg dst )
+{
+   return mk_iMOVsd_RR(src, dst);
 }
 
 /* Make a vector (128 bit) reg-reg move. */
@@ -4809,7 +4816,7 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
 
       // For the result values, find the vregs associated with the
       // result IRTemps, and pin them on the NCode block.
-      HReg* regsR = LibVEX_Alloc( (tmpl->nres+1) * sizeof(HReg) );
+      HReg* regsR = LibVEX_Alloc_inline( (tmpl->nres+1) * sizeof(HReg) );
       for (i = 0; i < tmpl->nres; i++) {
          IRTemp t = stmt->Ist.NCode.ress[i];
          vassert(t != IRTemp_INVALID);
@@ -4823,17 +4830,16 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
       // registers returned from the isel*Expr functions may not be
       // modified.  As usual vreg-vreg move coalescing will remove
       // those copies in the cases where they are not necessary.
-      HReg* regsA = LibVEX_Alloc( (tmpl->narg+1) * sizeof(HReg) );
+      HReg* regsA = LibVEX_Alloc_inline( (tmpl->narg+1) * sizeof(HReg) );
       for (i = 0; i < tmpl->narg; i++) {
          HReg arg = iselIntExpr_R(env, stmt->Ist.NCode.args[i]);
          regsA[i] = newVRegI(env);
          addInstr(env, mk_iMOVsd_RR(arg, regsA[i]));
-
       }
       regsA[tmpl->narg] = HReg_INVALID;
 
       // Allocate vregs for the scratch values.
-      HReg* regsS = LibVEX_Alloc( (tmpl->nscr+1) * sizeof(HReg) );
+      HReg* regsS = LibVEX_Alloc_inline( (tmpl->nscr+1) * sizeof(HReg) );
       for (i = 0; i < tmpl->nscr; i++) {
          regsS[i] = newVRegI(env);
       }

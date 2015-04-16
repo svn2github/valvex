@@ -160,7 +160,7 @@ void ppHRegPPC ( HReg reg )
           "%r28", "%r29", "%r30", "%r31" };
    /* Be generic for all virtual regs. */
    if (hregIsVirtual(reg)) {
-      ppHReg(reg);
+      ppHRegGENERIC(reg);
       return;
    }
    /* But specific for real regs. */

@@ -178,7 +178,7 @@ void ppHRegAMD64 ( HReg reg )
          "%r8",  "%r9",  "%r10", "%r11", "%r12", "%r13", "%r14", "%r15" };
    /* Be generic for all virtual regs. */
    if (hregIsVirtual(reg)) {
-      ppHReg(reg);
+      ppHRegGENERIC(reg);
       return;
    }
    /* But specific for real regs. */
@@ -207,7 +207,7 @@ static void ppHRegAMD64_lo32 ( HReg reg )
          "%r12d", "%r13d", "%r14d", "%r15d" };
    /* Be generic for all virtual regs. */
    if (hregIsVirtual(reg)) {
-      ppHReg(reg);
+      ppHRegGENERIC(reg);
       vex_printf("d");
       return;
    }
@@ -232,7 +232,7 @@ static void ppHRegAMD64_lo16 ( HReg reg )
          "%r12w", "%r13w", "%r14w", "%r15w" };
    /* Be generic for all virtual regs. */
    if (hregIsVirtual(reg)) {
-      ppHReg(reg);
+      ppHRegGENERIC(reg);
       vex_printf("w");
       return;
    }
@@ -1137,7 +1137,7 @@ AMD64Instr* AMD64Instr_ProfInc ( void ) {
 }
 AMD64Instr* AMD64Instr_NCode ( NCodeTemplate* tmpl, HReg* regsR,
                                HReg* regsA, HReg* regsS ) {
-   AMD64InstrNCode* details = LibVEX_Alloc_inline(sizeof(AMD64InstrNCode));
+   HInstrNCode* details = LibVEX_Alloc_inline(sizeof(HInstrNCode));
    details->tmpl        = tmpl;
    details->regsR       = regsR;
    details->regsA       = regsA;
@@ -1504,28 +1504,9 @@ void ppAMD64Instr ( const AMD64Instr* i, Bool mode64 )
       case Ain_ProfInc:
          vex_printf("(profInc) movabsq $NotKnownYet, %%r11; incq (%%r11)");
          return;
-      case Ain_NCode: {
-         UInt j;
-         AMD64InstrNCode* details = i->Ain.NCode.details;
-         NCodeTemplate*   tmpl    = details->tmpl;
-         vex_printf("NCode-AMD64:%s [", tmpl->name);
-         for (j = 0; j < tmpl->nres; j++) {
-            ppHRegAMD64(details->regsR[j]);
-            if (j != tmpl->nres-1) vex_printf(" ");
-         }
-         vex_printf("] <= [");
-         for (j = 0; j < tmpl->narg; j++) {
-            ppHRegAMD64(details->regsA[j]);
-            if (j != tmpl->narg-1) vex_printf(" ");
-         }
-         vex_printf("] scratch [");
-         for (j = 0; j < tmpl->nscr; j++) {
-            ppHRegAMD64(details->regsS[j]);
-            if (j != tmpl->nscr-1) vex_printf(" ");
-         }
-         vex_printf("]");
+      case Ain_NCode:
+         HInstrNCode__show(i->Ain.NCode.details, ppHRegAMD64, "AMD64");
          return;
-      }
       case Ain_NC_Jmp32: {
          vex_printf("j%s rel32",
                     i->Ain.NC_Jmp32.cc == Acc_ALWAYS
@@ -1838,25 +1819,9 @@ void getRegUsage_AMD64Instr ( HRegUsage* u, const AMD64Instr* i, Bool mode64 )
       case Ain_ProfInc:
          addHRegUse(u, HRmWrite, hregAMD64_R11());
          return;
-      case Ain_NCode: {
-         AMD64InstrNCode* details = i->Ain.NCode.details;
-         NCodeTemplate*   tmpl    = details->tmpl;
-         // It writes the result and scratch registers.
-         UInt j;
-         for (j = 0; j < tmpl->nres; j++)
-            addHRegUse(u, HRmWrite, details->regsR[j]);
-         for (j = 0; j < tmpl->nscr; j++)
-            addHRegUse(u, HRmWrite, details->regsS[j]);
-         // It both reads and writes the arg regs.  We have to say
-         // they are written in order to force them to be allocated
-         // different registers from the arg and scratch registers,
-         // since we have no way to ensure that the NCode block
-         // doesn't write its scratch and result registers and later
-         // on read the argument registers.
-         for (j = 0; j < tmpl->narg; j++)
-            addHRegUse(u, HRmModify, details->regsA[j]);
+      case Ain_NCode:
+         HInstrNCode__getRegUsage(u, i->Ain.NCode.details);
          return;
-      }
       default:
          ppAMD64Instr(i, mode64);
          vpanic("getRegUsage_AMD64Instr");
@@ -2052,18 +2017,9 @@ void mapRegs_AMD64Instr ( HRegRemap* m, AMD64Instr* i, Bool mode64 )
       case Ain_ProfInc:
          /* hardwires r11 -- nothing to modify. */
          return;
-      case Ain_NCode: {
-         AMD64InstrNCode* details = i->Ain.NCode.details;
-         NCodeTemplate*   tmpl    = details->tmpl;
-         UInt j;
-         for (j = 0; j < tmpl->nres; j++)
-            mapReg(m, &details->regsR[j]);
-         for (j = 0; j < tmpl->nscr; j++)
-            mapReg(m, &details->regsS[j]);
-         for (j = 0; j < tmpl->narg; j++)
-            mapReg(m, &details->regsA[j]);
+      case Ain_NCode:
+         HInstrNCode__mapRegs(i->Ain.NCode.details, m);
          return;
-      }
       default:
          ppAMD64Instr(i, mode64);
          vpanic("mapRegs_AMD64Instr");
@@ -2236,13 +2192,13 @@ static void emit64 ( /*MOD*/AssemblyBuffer* ab, ULong w64 )
    emit32(ab, toUInt((w64 >> 32) & 0xFFFFFFFF));
 }
 
-/* Does a sign-extend of the lowest 8 bits give 
-   the original number? */
+/* Does a sign-extend of the lowest 8 bits give the original number? */
 static Bool fits8bits ( UInt w32 )
 {
    Int i32 = (Int)w32;
    return toBool(i32 == ((Int)(w32 << 24) >> 24));
 }
+
 /* Can the lower 32 bits be signedly widened to produce the whole
    64-bit value?  In other words, are the top 33 bits either all 0 or
    all 1 ? */
@@ -4142,9 +4098,7 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
          /* Marshall args for the call, do the call, marshal the result */
          /* Case: 1 arg reg, 1 result reg */
 
-         UInt nArgRegs = 0;
-         while (!isNRegINVALID(ni->Nin.Call.argRegs[nArgRegs]))
-            nArgRegs++;
+         UInt nArgRegs = nregVecLen(ni->Nin.Call.argRegs);
 
          if (nArgRegs == 1
              && isNRegINVALID(ni->Nin.Call.resHi) 
@@ -4155,14 +4109,14 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
             HReg rdi  = hregAMD64_RDI();
             HReg rax  = hregAMD64_RAX();
             if (!sameHReg(arg1, rdi))
-               HI( mk_iMOVsd_RR(arg1, rdi) );
+               HI( mk_iMOVsd_RR_AMD64(arg1, rdi) );
 
             HReg r11 = hregAMD64_R11();
             HI( AMD64Instr_Imm64((ULong)(HWord)ni->Nin.Call.entry, r11) );
             HI( AMD64Instr_NC_CallR11() );
 
             if (!sameHReg(rax, res1))
-               HI( mk_iMOVsd_RR(rax, res1) );
+               HI( mk_iMOVsd_RR_AMD64(rax, res1) );
          } else {
             goto unhandled;
          }
@@ -4212,7 +4166,7 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
          vassert(shOp != Ash_INVALID);
 
          if (!sameHReg(src, dst)) {
-            HI( mk_iMOVsd_RR(src, dst) );
+            HI( mk_iMOVsd_RR_AMD64(src, dst) );
          }
          HI( AMD64Instr_Sh64(shOp, amt, dst) );
          break;
@@ -4232,7 +4186,7 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
          vassert(shOp != Ash_INVALID);
 
          if (!sameHReg(src, dst)) {
-            HI( mk_iMOVsd_RR(src, dst) );
+            HI( mk_iMOVsd_RR_AMD64(src, dst) );
          }
          /* Now, we have the shift amount in register |amt|.  Problem
             is that it needs to be in %rcx, but we don't know whether
@@ -4243,10 +4197,10 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
             allocatable, since the insn selector uses it to put
             variable shift amounts in.  So we can't safely trash it
             here. */
-         HI( mk_iMOVsd_RR(hregAMD64_RCX(), hregAMD64_R11()) ); // save rcx
-         HI( mk_iMOVsd_RR(amt,             hregAMD64_RCX()) ); // amt->rcx
+         HI( mk_iMOVsd_RR_AMD64(hregAMD64_RCX(), hregAMD64_R11()) ); // save rcx
+         HI( mk_iMOVsd_RR_AMD64(amt,             hregAMD64_RCX()) ); // amt->rcx
          HI( AMD64Instr_Sh64(shOp, 0/*meaning %cl*/, dst) );
-         HI( mk_iMOVsd_RR(hregAMD64_R11(), hregAMD64_RCX()) ); // restore rcx
+         HI( mk_iMOVsd_RR_AMD64(hregAMD64_R11(), hregAMD64_RCX()) ); // rest rcx
          break;
       }
 
@@ -4261,7 +4215,7 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
          }
          if (how == Nalu_AND && fitsIn32Bits((ULong)imm)) {
             if (!sameHReg(srcLR, dstR)) {
-               HI( mk_iMOVsd_RR(srcLR, dstR) );
+               HI( mk_iMOVsd_RR_AMD64(srcLR, dstR) );
             }
             HI( AMD64Instr_Alu64R(Aalu_AND, AMD64RMI_Imm(imm), dstR) );
             break;
@@ -4276,7 +4230,7 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
          HReg  srcRR = mapNReg(nregMap, ni->Nin.AluWrr.srcR);
          if (how == Nalu_ADD) {
             if (!sameHReg(srcLR, dstR)) {
-               HI( mk_iMOVsd_RR(srcLR, dstR) );
+               HI( mk_iMOVsd_RR_AMD64(srcLR, dstR) );
             }
             HI( AMD64Instr_Alu64R(Aalu_ADD, AMD64RMI_Reg(srcRR), dstR) );
             break;
@@ -4303,7 +4257,7 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
       case Nin_MovW: {
          HReg src = mapNReg(nregMap, ni->Nin.MovW.src);
          HReg dst = mapNReg(nregMap, ni->Nin.MovW.dst);
-         HI( mk_iMOVsd_RR(src, dst) );
+         HI( mk_iMOVsd_RR_AMD64(src, dst) );
          break;
       }
 
@@ -4325,9 +4279,9 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
             }
          }
          if (addr->tag == Nea_RRS) {
-            HReg baseR  = mapNReg(nregMap, addr->Nea.RRS.base);
-            HReg indexR = mapNReg(nregMap, addr->Nea.RRS.index);
-            UChar shift = addr->Nea.RRS.shift;
+            HReg  baseR  = mapNReg(nregMap, addr->Nea.RRS.base);
+            HReg  indexR = mapNReg(nregMap, addr->Nea.RRS.index);
+            UChar shift  = addr->Nea.RRS.shift;
             if (shift <= 3) {
                AMD64AMode* am = AMD64AMode_IRRS(0, baseR, indexR, shift);
                if (szB == 2 || szB == 1) {
@@ -4346,8 +4300,7 @@ void emit_AMD64NInstr ( /*MOD*/AssemblyBuffer* ab,
          goto unhandled;
    }
 
-   UInt i;
-   for (i = 0; i < hiBufUsed; i++) {
+   for (UInt i = 0; i < hiBufUsed; i++) {
       if (verbose) {
          vex_printf("              ");
          ppAMD64Instr(hiBuf[i], True/*mode64*/);
@@ -4384,109 +4337,11 @@ Bool emit_AMD64NCodeBlock ( /*MOD*/AssemblyBuffer*   ab_hot,
                             Bool mode64, VexEndness endness_host,
                             Bool verbose )
 {
-   vassert(mode64 == True);
+   vassert(mode64       == True);
    vassert(endness_host == VexEndnessLE);
-   vassert(hi->tag == Ain_NCode);
-
-   const AMD64InstrNCode* hi_details     = hi->Ain.NCode.details;
-   const NCodeTemplate*   tmpl           = hi_details->tmpl;
-   const RRegSet*         rregsLiveAfter = hi_details->rrLiveAfter;
-
-   NRegMap nregMap;
-   nregMap.regsR  = hi_details->regsR;
-   nregMap.regsA  = hi_details->regsA;
-   nregMap.regsS  = hi_details->regsS;
-   nregMap.nRegsR = tmpl->nres;
-   nregMap.nRegsA = tmpl->narg;
-   nregMap.nRegsS = tmpl->nscr;
-
-   vassert(hregVecLen(nregMap.regsR) == nregMap.nRegsR);
-   vassert(hregVecLen(nregMap.regsA) == nregMap.nRegsA);
-   vassert(hregVecLen(nregMap.regsS) == nregMap.nRegsS);
-
-   if (AssemblyBuffer__getRemainingSize(ab_hot) < 1024)
-      return False;
-   if (AssemblyBuffer__getRemainingSize(ab_cold) < 1024)
-      return False;
-   if (RelocationBuffer__getRemainingSize(rb) < 128)
-      return False;
-
-   /* Count how many hot and cold instructions (NInstrs) the template
-      has, since we'll need to allocate temporary arrays to keep track
-      of the label offsets. */
-   UInt nHot, nCold;
-   for (nHot = 0; tmpl->hot[nHot]; nHot++)
-      ;
-   for (nCold = 0; tmpl->cold[nCold]; nCold++)
-      ;
-
-   /* Here are our two arrays for tracking the AssemblyBuffer offsets
-      of the NCode instructions. */
-   UInt i;
-   UInt offsetsHot[nHot];
-   UInt offsetsCold[nCold];
-   for (i = 0; i < nHot;  i++) offsetsHot[i]  = 0;
-   for (i = 0; i < nCold; i++) offsetsCold[i] = 0;
-
-   /* We'll be adding entries to the relocation buffer, |rb|, and will
-      need to adjust their |dst| fields after generation of the hot
-      and cold code.  Record therefore where we are in the buffer now,
-      so that we can iterate over the new entries later. */
-   UInt rb_first = RelocationBuffer__getNext(rb);
-
-   /* Generate the hot code */
-   for (i = 0; i < nHot; i++) {
-      offsetsHot[i] = AssemblyBuffer__getNext(ab_hot);
-      NLabel lbl = mkNLabel(Nlz_Hot, i);
-      emit_AMD64NInstr(ab_hot, rb, tmpl->hot[i], &nregMap,
-                       rregsLiveAfter, verbose, lbl);
-   }   
-
-   /* And the cold code */
-   for (i = 0; i < nCold; i++) {
-      offsetsCold[i] = AssemblyBuffer__getNext(ab_cold);
-      NLabel lbl = mkNLabel(Nlz_Cold, i);
-      emit_AMD64NInstr(ab_cold, rb, tmpl->cold[i], &nregMap,
-                       rregsLiveAfter, verbose, lbl);
-   }
-
-   /* Now visit the new relocation entries. */
-   UInt rb_last1 = RelocationBuffer__getNext(rb);
-
-   for (i = rb_first; i < rb_last1; i++) {
-      Relocation* reloc = &rb->buf[i];
-
-      /* Show the reloc before the label-to-offset transformation. */
-      if (verbose) {
-         vex_printf("   reloc:  ");
-         ppRelocation(reloc);
-         vex_printf("\n");
-      }
-
-      /* Transform the destination component of |reloc| so that it no
-         longer refers to a label but rather to an offset in the hot
-         or cold assembly buffer. */
-      vassert(!reloc->dst.isOffset);
-      reloc->dst.isOffset = True;
-
-      if (reloc->dst.zone == Nlz_Hot) {
-         vassert(reloc->dst.num < nHot);
-         reloc->dst.num = offsetsHot[reloc->dst.num];
-      } else {
-         vassert(reloc->dst.zone == Nlz_Cold);
-         vassert(reloc->dst.num < nCold);
-         reloc->dst.num = offsetsCold[reloc->dst.num];
-      }
-
-      /* Show the reloc after the label-to-offset transformation. */
-      if (verbose) {
-         vex_printf("   reloc:  ");
-         ppRelocation(reloc);
-         vex_printf("\n");
-      }
-   }
-
-   return True;
+   vassert(hi->tag      == Ain_NCode);
+   return HInstrNCode__emit ( ab_hot, ab_cold, rb, hi->Ain.NCode.details,
+                              verbose, emit_AMD64NInstr );
 }
 
 

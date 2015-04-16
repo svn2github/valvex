@@ -2794,53 +2794,53 @@ typedef
             void* entry;   /* where we are calling to */
             const HChar* name; /* for printing purposes only */
          } Call;
-        struct {
-           NReg  dst;
-           HWord imm;
-        } ImmW;
-        struct {
-           NShift how;
-           NReg   dst;
-           NReg   srcL;
-           UInt   amt;  /* 1 .. host-word-size-1 only */
-        } ShiftWri;
-        struct {
-           NShift how;
-           NReg   dst;
-           NReg   srcL;
-           NReg   amt;  /* 0 .. host-word-size-1 only */
-        } ShiftWrr;
-        struct {
-           NAlu  how;
-           NReg  dst;
-           NReg  srcL;
-           HWord srcR;
-        } AluWri;
-        struct {
-           NAlu  how;
-           NReg  dst;
-           NReg  srcL;
-           NReg  srcR;
-        } AluWrr;
-        struct {
-           NSetFlags how;
-           NReg      srcL;
-           HWord     srcR;
-        } SetFlagsWri;
-        struct {
-           NReg dst;
-           NReg src;
-        } MovW;
-        struct {
-           UChar szB; /* 1, 2, 4 or (for 64 bit hosts) 8 */
-           NReg  dst;
-           NEA*  addr;
-        } LoadU;
-        struct {
-           UChar szB; /* 1, 2, 4 or (for 64 bit hosts) 8 */
-           NReg  src;
-           NEA*  addr;
-        } Store;
+         struct {
+            NReg  dst;
+            HWord imm;
+         } ImmW;
+         struct {
+            NShift how;
+            NReg   dst;
+            NReg   srcL;
+            UInt   amt;  /* 1 .. host-word-size-1 only */
+         } ShiftWri;
+         struct {
+            NShift how;
+            NReg   dst;
+            NReg   srcL;
+            NReg   amt;  /* 0 .. host-word-size-1 only */
+         } ShiftWrr;
+         struct {
+            NAlu  how;
+            NReg  dst;
+            NReg  srcL;
+            HWord srcR;
+         } AluWri;
+         struct {
+            NAlu  how;
+            NReg  dst;
+            NReg  srcL;
+            NReg  srcR;
+         } AluWrr;
+         struct {
+            NSetFlags how;
+            NReg      srcL;
+            HWord     srcR;
+         } SetFlagsWri;
+         struct {
+            NReg dst;
+            NReg src;
+         } MovW;
+         struct {
+            UChar szB; /* 1, 2, 4 or (for 64 bit hosts) 8 */
+            NReg  dst;
+            NEA*  addr;
+         } LoadU;
+         struct {
+            UChar szB; /* 1, 2, 4 or (for 64 bit hosts) 8 */
+            NReg  src;
+            NEA*  addr;
+         } Store;
       }
       Nin;
    }

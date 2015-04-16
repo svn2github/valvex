@@ -146,7 +146,7 @@ void ppHRegARM64 ( HReg reg )  {
    Int r;
    /* Be generic for all virtual regs. */
    if (hregIsVirtual(reg)) {
-      ppHReg(reg);
+      ppHRegGENERIC(reg);
       return;
    }
    /* But specific for real regs. */
