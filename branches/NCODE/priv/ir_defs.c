@@ -374,9 +374,17 @@ void ppIRTemp ( IRTemp tmp )
 }
 
 IRTemp* mkIRTempVec_1 ( IRTemp tmp1 ) {
-   IRTemp* vec = LibVEX_Alloc(2 * sizeof(IRTemp*));
+   IRTemp* vec = LibVEX_Alloc_inline(2 * sizeof(IRTemp*));
    vec[0] = tmp1;
    vec[1] = IRTemp_INVALID;
+   return vec;
+}
+
+IRTemp* mkIRTempVec_2 ( IRTemp tmp1, IRTemp tmp2 ) {
+   IRTemp* vec = LibVEX_Alloc_inline(3 * sizeof(IRTemp*));
+   vec[0] = tmp1;
+   vec[1] = tmp2;
+   vec[2] = IRTemp_INVALID;
    return vec;
 }
 

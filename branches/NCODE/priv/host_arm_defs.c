@@ -2962,6 +2962,14 @@ static void imm32_to_ireg ( /*MOD*/AssemblyBuffer* ab, Int rD, UInt imm32 )
       *p++ = imm32;
    }
 #else
+
+   if (imm32 == 0xFFFFFFFF) {
+      /* Generate mvn rD, #0 */
+      instr = XXXXXXXX(0xE, 0x3, 0xE, 0x0, rD, 0, 0, 0);
+      PUT(ab, instr);
+      return;
+   }
+
    if (VEX_ARM_ARCHLEVEL(arm_hwcaps) > 6) {
       /* Generate movw rD, #low16.  Then, if the high 16 are
          nonzero, generate movt rD, #high16. */
@@ -3299,6 +3307,15 @@ Bool emit_ARMInstr ( /*MOD*/AssemblyBuffer* ab,
             else vassert(0); // ill-constructed insn
          } else {
             // RR case
+            HReg rN = am->ARMam2.RR.base;
+            HReg rM = am->ARMam2.RR.index;
+            if (bL == 1 && bS == 0) {
+               // ldrh
+               UInt instr = XXXXXXXX(cc, X0001, X1001, iregEnc(rN),
+                                     iregEnc(rD), X0000, X1011, iregEnc(rM));
+               PUT(ab, instr);
+               goto done;
+            }
             goto bad;
          }
       }
@@ -4889,7 +4906,7 @@ void emit_ARMNInstr ( /*MOD*/AssemblyBuffer* ab,
 
       case Nin_Branch: {
          /* We are going to generate an ARM branch insn, which naturally
-            can be conditional if neeed.  It will be of the form 
+            can be conditional if necessary.  It will be of the form 
               cond:4 1010 simm:24
             We need to generate both the instruction and a relocation
             record that describes how to fix up the offset (simm:24)
@@ -4912,12 +4929,12 @@ void emit_ARMNInstr ( /*MOD*/AssemblyBuffer* ab,
             = mkRelocWhere(niLabel.zone, AssemblyBuffer__getNext(ab)+0);
          RelocDst dst
             = mkRelocDst_from_NLabel(ni->Nin.Branch.dst);
-         /* Bias is 8 because we've set |where| to be the start of the
+         /* Bias is -8 because we've set |where| to be the start of the
             branch insn.  The processor however expects the offset to
             be relative to the start of 8 bytes past the insn (ARM
             ancient history) which means that a naive "dst - where"
             value will give an offset that is 8 too large.  Hence the
-            bias of 8. */
+            bias of -8. */
          Relocation reloc
             = mkRelocation(where, 0, 23, dst, /*bias*/-8, /*rshift*/2);
          vassert(RelocationBuffer__getRemainingSize(rb) > 0);
@@ -4974,29 +4991,64 @@ void emit_ARMNInstr ( /*MOD*/AssemblyBuffer* ab,
          vassert(slotNo == n_to_preserve);
 
          /* Marshall args for the call, do the call, marshal the result */
-         /* Case: 1 arg reg, 1 result reg */
 
          UInt nArgRegs = nregVecLen(ni->Nin.Call.argRegs);
+         HReg r0       = hregARM_R0();
+         HReg r1       = hregARM_R1();
+         HReg r12      = hregARM_R12();
 
          if (nArgRegs == 1
              && isNRegINVALID(ni->Nin.Call.resHi) 
              && !isNRegINVALID(ni->Nin.Call.resLo)) {
-
+            /* Case: 1 arg reg, 1 result reg */
             HReg arg1 = mapNReg(nregMap, ni->Nin.Call.argRegs[0]);
             HReg res1 = mapNReg(nregMap, ni->Nin.Call.resLo);
-            HReg r0   = hregARM_R0();
             if (!sameHReg(r0, arg1))
                HI( mk_iMOVds_RR_ARM(r0, arg1) );
 
-            HReg r12 = hregARM_R12();
             HI( ARMInstr_Imm32(r12, (UInt)(HWord)ni->Nin.Call.entry) );
             HI( ARMInstr_NC_CallR12() );
 
             if (!sameHReg(res1, r0))
-              HI( mk_iMOVds_RR_ARM(res1, r0) );
-         } else {
-            goto unhandled;
+               HI( mk_iMOVds_RR_ARM(res1, r0) );
          }
+         else
+         if (nArgRegs == 1
+             && !isNRegINVALID(ni->Nin.Call.resHi) 
+             && !isNRegINVALID(ni->Nin.Call.resLo)) {
+            /* Case: 1 arg reg, 2 result res */
+            HReg arg1  = mapNReg(nregMap, ni->Nin.Call.argRegs[0]);
+            HReg resLo = mapNReg(nregMap, ni->Nin.Call.resLo);
+            HReg resHi = mapNReg(nregMap, ni->Nin.Call.resHi);
+            if (!sameHReg(r0, arg1))
+               HI( mk_iMOVds_RR_ARM(r0, arg1) );
+
+            HI( ARMInstr_Imm32(r12, (UInt)(HWord)ni->Nin.Call.entry) );
+            HI( ARMInstr_NC_CallR12() );
+
+            /* Need to do "resHi:resLo = r1:r0".  There's various fancy
+               ways to do this, but we'll keep it simple and do this:
+                  if all 4 registers are disjoint:
+                     resLo = r0
+                     resHi = r1
+                  else
+                     r12   = r0
+                     resHi = r1
+                     resLo = r12
+            */
+            vassert(!sameHReg(resLo, resHi));
+            if (!sameHReg(resLo, r0) && !sameHReg(resLo, r1) &&
+                !sameHReg(resHi, r0) && !sameHReg(resHi, r1)) {
+               HI( mk_iMOVds_RR_ARM(resLo, r0) );
+               HI( mk_iMOVds_RR_ARM(resHi, r1) );
+            } else {
+               HI( mk_iMOVds_RR_ARM(r12,   r0) );
+               HI( mk_iMOVds_RR_ARM(resHi, r1) );
+               HI( mk_iMOVds_RR_ARM(resLo, r12) );
+            }
+         } 
+         else
+            goto unhandled;
 
          /* Restore live regs */
          RRegSetIterator__init(iter, &to_preserve);
@@ -5074,8 +5126,14 @@ void emit_ARMNInstr ( /*MOD*/AssemblyBuffer* ab,
             HI( ARMInstr_CmpOrTst(False/*!isCmp*/, reg, ARMRI84_I84(imm,0)) );
             break;
          }
-         if (ni->Nin.SetFlagsWri.how == Nsf_CMP && imm <= 0xFF) {
-            HI( ARMInstr_CmpOrTst(True/*isCmp*/, reg, ARMRI84_I84(imm,0)) );
+         if (ni->Nin.SetFlagsWri.how == Nsf_CMP) {
+            if (imm <= 0xFF) {
+               HI( ARMInstr_CmpOrTst(True/*isCmp*/, reg, ARMRI84_I84(imm,0)) );
+            } else {
+               HReg r12 = hregARM_R12();
+               HI( ARMInstr_Imm32(r12, imm) );
+               HI( ARMInstr_CmpOrTst(True/*isCmp*/, reg, ARMRI84_R(r12)) );
+            }
             break;
          }
          goto unhandled;
@@ -5092,9 +5150,9 @@ void emit_ARMNInstr ( /*MOD*/AssemblyBuffer* ab,
          HReg  dstR = mapNReg(nregMap, ni->Nin.LoadU.dst);
          NEA*  addr = ni->Nin.LoadU.addr;
          UChar szB  = ni->Nin.LoadU.szB;
-         /* The Nea_IRS case is a kludge.  It would be better to
-            generate a single instruction, but that requires a new
-            AMDAMode_IRS, which doesn't currently exist. */
+         /* The Nea_IRS case is a bit ugly, since we have to
+            synthesise a 32 bit immediate, but there's no way around
+            that. */
          if (addr->tag == Nea_IRS && !fitsIn12bits((UInt)addr->Nea.IRS.base)) {
             UInt  imm    = (UInt)addr->Nea.IRS.base;
             HReg  indexR = mapNReg(nregMap, addr->Nea.IRS.index);
@@ -5116,6 +5174,14 @@ void emit_ARMNInstr ( /*MOD*/AssemblyBuffer* ab,
             if (szB == 1 && shift <= 3) {
                HI( ARMInstr_LdSt8U(ARMcc_AL, True/*isLoad*/, dstR,
                                    ARMAMode1_RRS(baseR, indexR, shift)) );
+               break;
+            }
+            if (szB == 2 && shift > 0 && shift <= 3) {
+               HReg r12 = hregARM_R12();
+               HI( ARMInstr_Shift(ARMsh_SHL, r12, indexR, ARMRI5_I5(shift)) );
+               HI( ARMInstr_LdSt16(ARMcc_AL, True/*isLoad*/,
+                                   False/*!signedLoad*/, dstR,
+                                   ARMAMode2_RR(baseR, r12)) );
                break;
             }
          }

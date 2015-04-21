@@ -401,6 +401,7 @@ extern void ppIRTemp ( IRTemp );
 
 /* IRTemp_INVALID-terminated IRTemp vector constructors. */
 extern IRTemp* mkIRTempVec_1 ( IRTemp );
+extern IRTemp* mkIRTempVec_2 ( IRTemp, IRTemp );
 
 
 /* --------------- Primops (arity 1,2,3 and 4) --------------- */
