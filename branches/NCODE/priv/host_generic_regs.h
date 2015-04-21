@@ -821,9 +821,9 @@ void calcRegistersToPreserveAroundNCodeCall (
    Returns True if OK, False if not enough buffer space.
 */
 extern
-Bool HInstrNCode__emit (  /*MOD*/AssemblyBuffer*   ab_hot,
-                          /*MOD*/AssemblyBuffer*   ab_cold,
-                          /*MOD*/RelocationBuffer* rb,
+Bool HInstrNCode__emit ( /*MOD*/AssemblyBuffer*   ab_hot,
+                         /*MOD*/AssemblyBuffer*   ab_cold,
+                         /*MOD*/RelocationBuffer* rb,
                          const HInstrNCode* details,
                          Bool verbose,
                          void (*emit_OneNInstr) (

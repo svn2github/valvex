@@ -772,9 +772,9 @@ void calcRegistersToPreserveAroundNCodeCall (
    This function is required to generate <= 1024 bytes of code.
    Returns True if OK, False if not enough buffer space.
 */
-Bool HInstrNCode__emit (  /*MOD*/AssemblyBuffer*   ab_hot,
-                          /*MOD*/AssemblyBuffer*   ab_cold,
-                          /*MOD*/RelocationBuffer* rb,
+Bool HInstrNCode__emit ( /*MOD*/AssemblyBuffer*   ab_hot,
+                         /*MOD*/AssemblyBuffer*   ab_cold,
+                         /*MOD*/RelocationBuffer* rb,
                          const HInstrNCode* details,
                          Bool verbose,
                          void (*emit_OneNInstr) (
