@@ -413,7 +413,16 @@ typedef
    }
    IRTemp;
 
-#define IRTemp_INVALID {IRTyEnvID_INVALID, IRTyEnvIndex_INVALID}
+static inline IRTemp mkIRTemp(IRTyEnvID id, IRTyEnvIndex index)
+{
+   IRTemp tmp = {id, index};
+   return tmp;
+}
+
+static inline IRTemp IRTemp_INVALID(void)
+{
+   return mkIRTemp(IRTyEnvID_INVALID, IRTyEnvIndex_INVALID);
+}
 
 /* Pretty-print an IRTemp. */
 extern void ppIRTemp ( IRTemp );

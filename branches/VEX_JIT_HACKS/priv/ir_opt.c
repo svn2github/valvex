@@ -3790,8 +3790,7 @@ static IRTemp subst_AvailExpr_Temp ( HashHW* env, IRTemp tmp )
    HWord res;
    /* env :: IRTemp -> IRTemp */
    if (lookupHHW(env, &res, (HWord)tmp.index)) {
-      IRTemp ret = {tmp.id, res};
-      return ret;
+      return mkIRTemp(tmp.id, res);
    } else {
       return tmp;
    }

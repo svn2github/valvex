@@ -208,7 +208,8 @@ static Addr32 guest_EIP_bbstart;
    translated. */
 static Addr32 guest_EIP_curr_instr;
 
-/* The IRSB* into which we're generating code. */
+/* The IRSB* into which we're generating code. All functions below work
+   implicitly with the main statement vector held by irsb->stmts. */
 static IRSB* irsb;
 
 
@@ -309,17 +310,17 @@ static IRSB* irsb;
 #define R_GS 5
 
 
-/* Add a statement to the list held by "irbb". */
+/* Add a statement to the main statement vector held by "irbb->stmts". */
 static void stmt ( IRStmt* st )
 {
-   addStmtToIRSB( irsb, st );
+   addStmtToIRStmtVec(irsb->stmts, st);
 }
 
 /* Generate a new temporary of the given type. */
 static IRTemp newTemp ( IRType ty )
 {
    vassert(isPlausibleIRType(ty));
-   return newIRTemp( irsb->tyenv, ty );
+   return newIRTemp(irsb->stmts->tyenv, ty);
 }
 
 /* Various simple conversions */
@@ -547,7 +548,7 @@ static IRExpr* getIReg ( Int sz, UInt archreg )
 /* Ditto, but write to a reg instead. */
 static void putIReg ( Int sz, UInt archreg, IRExpr* e )
 {
-   IRType ty = typeOfIRExpr(irsb->tyenv, e);
+   IRType ty = typeOfIRExpr(irsb->stmts->tyenv, e);
    switch (sz) {
       case 1: vassert(ty == Ity_I8); break;
       case 2: vassert(ty == Ity_I16); break;
@@ -565,7 +566,7 @@ static IRExpr* getSReg ( UInt sreg )
 
 static void putSReg ( UInt sreg, IRExpr* e )
 {
-   vassert(typeOfIRExpr(irsb->tyenv,e) == Ity_I16);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, e) == Ity_I16);
    stmt( IRStmt_Put( segmentGuestRegOffset(sreg), e ) );
 }
 
@@ -596,37 +597,37 @@ static IRExpr* getXMMRegLane32F ( UInt xmmreg, Int laneno )
 
 static void putXMMReg ( UInt xmmreg, IRExpr* e )
 {
-   vassert(typeOfIRExpr(irsb->tyenv,e) == Ity_V128);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, e) == Ity_V128);
    stmt( IRStmt_Put( xmmGuestRegOffset(xmmreg), e ) );
 }
 
 static void putXMMRegLane64 ( UInt xmmreg, Int laneno, IRExpr* e )
 {
-   vassert(typeOfIRExpr(irsb->tyenv,e) == Ity_I64);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, e) == Ity_I64);
    stmt( IRStmt_Put( xmmGuestRegLane64offset(xmmreg,laneno), e ) );
 }
 
 static void putXMMRegLane64F ( UInt xmmreg, Int laneno, IRExpr* e )
 {
-   vassert(typeOfIRExpr(irsb->tyenv,e) == Ity_F64);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, e) == Ity_F64);
    stmt( IRStmt_Put( xmmGuestRegLane64offset(xmmreg,laneno), e ) );
 }
 
 static void putXMMRegLane32F ( UInt xmmreg, Int laneno, IRExpr* e )
 {
-   vassert(typeOfIRExpr(irsb->tyenv,e) == Ity_F32);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, e) == Ity_F32);
    stmt( IRStmt_Put( xmmGuestRegLane32offset(xmmreg,laneno), e ) );
 }
 
 static void putXMMRegLane32 ( UInt xmmreg, Int laneno, IRExpr* e )
 {
-   vassert(typeOfIRExpr(irsb->tyenv,e) == Ity_I32);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, e) == Ity_I32);
    stmt( IRStmt_Put( xmmGuestRegLane32offset(xmmreg,laneno), e ) );
 }
 
 static void putXMMRegLane16 ( UInt xmmreg, Int laneno, IRExpr* e )
 {
-   vassert(typeOfIRExpr(irsb->tyenv,e) == Ity_I16);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, e) == Ity_I16);
    stmt( IRStmt_Put( xmmGuestRegLane16offset(xmmreg,laneno), e ) );
 }
 
@@ -734,8 +735,8 @@ static IROp mkWidenOp ( Int szSmall, Int szBig, Bool signd )
 
 static IRExpr* mkAnd1 ( IRExpr* x, IRExpr* y )
 {
-   vassert(typeOfIRExpr(irsb->tyenv,x) == Ity_I1);
-   vassert(typeOfIRExpr(irsb->tyenv,y) == Ity_I1);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, x) == Ity_I1);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, y) == Ity_I1);
    return unop(Iop_32to1, 
                binop(Iop_And32, 
                      unop(Iop_1Uto32,x), 
@@ -752,15 +753,15 @@ static void casLE ( IRExpr* addr, IRExpr* expVal, IRExpr* newVal,
                     Addr32 restart_point )
 {
    IRCAS* cas;
-   IRType tyE    = typeOfIRExpr(irsb->tyenv, expVal);
-   IRType tyN    = typeOfIRExpr(irsb->tyenv, newVal);
+   IRType tyE    = typeOfIRExpr(irsb->stmts->tyenv, expVal);
+   IRType tyN    = typeOfIRExpr(irsb->stmts->tyenv, newVal);
    IRTemp oldTmp = newTemp(tyE);
    IRTemp expTmp = newTemp(tyE);
    vassert(tyE == tyN);
    vassert(tyE == Ity_I32 || tyE == Ity_I16 || tyE == Ity_I8);
    assign(expTmp, expVal);
-   cas = mkIRCAS( IRTemp_INVALID, oldTmp, Iend_LE, addr, 
-                  NULL, mkexpr(expTmp), NULL, newVal );
+   cas = mkIRCAS(IRTemp_INVALID(), oldTmp, Iend_LE, addr, 
+                 NULL, mkexpr(expTmp), NULL, newVal);
    stmt( IRStmt_CAS(cas) );
    stmt( IRStmt_Exit(
             binop( mkSizedOp(tyE,Iop_CasCmpNE8),
@@ -867,7 +868,7 @@ static Bool isLogic ( IROp op8 )
 /* U-widen 8/16/32 bit int expr to 32. */
 static IRExpr* widenUto32 ( IRExpr* e )
 {
-   switch (typeOfIRExpr(irsb->tyenv,e)) {
+   switch (typeOfIRExpr(irsb->stmts->tyenv, e)) {
       case Ity_I32: return e;
       case Ity_I16: return unop(Iop_16Uto32,e);
       case Ity_I8:  return unop(Iop_8Uto32,e);
@@ -878,7 +879,7 @@ static IRExpr* widenUto32 ( IRExpr* e )
 /* S-widen 8/16/32 bit int expr to 32. */
 static IRExpr* widenSto32 ( IRExpr* e )
 {
-   switch (typeOfIRExpr(irsb->tyenv,e)) {
+   switch (typeOfIRExpr(irsb->stmts->tyenv, e)) {
       case Ity_I32: return e;
       case Ity_I16: return unop(Iop_16Sto32,e);
       case Ity_I8:  return unop(Iop_8Sto32,e);
@@ -890,7 +891,7 @@ static IRExpr* widenSto32 ( IRExpr* e )
    of these combinations make sense. */
 static IRExpr* narrowTo ( IRType dst_ty, IRExpr* e )
 {
-   IRType src_ty = typeOfIRExpr(irsb->tyenv,e);
+   IRType src_ty = typeOfIRExpr(irsb->stmts->tyenv, e);
    if (src_ty == dst_ty)
       return e;
    if (src_ty == Ity_I32 && dst_ty == Ity_I16)
@@ -970,7 +971,7 @@ static void setFlags_DEP1_DEP2_shift ( IROp    op32,
    Int ccOp = ty==Ity_I8 ? 2 : (ty==Ity_I16 ? 1 : 0);
 
    vassert(ty == Ity_I8 || ty == Ity_I16 || ty == Ity_I32);
-   vassert(guard);
+   vassert(!isIRTempInvalid(guard));
 
    /* Both kinds of right shifts are handled by the same thunk
       operation. */
@@ -1132,7 +1133,7 @@ static void helper_ADC ( Int sz,
    IROp    plus  = mkSizedOp(ty, Iop_Add8);
    IROp    xor   = mkSizedOp(ty, Iop_Xor8);
 
-   vassert(typeOfIRTemp(irsb->tyenv, tres) == ty);
+   vassert(typeOfIRTemp(irsb->stmts->tyenv, tres) == ty);
    vassert(sz == 1 || sz == 2 || sz == 4);
    thunkOp = sz==4 ? X86G_CC_OP_ADCL 
                    : (sz==2 ? X86G_CC_OP_ADCW : X86G_CC_OP_ADCB);
@@ -1150,12 +1151,12 @@ static void helper_ADC ( Int sz,
 
    /* Possibly generate a store of 'tres' to 'taddr'.  See comment at
       start of this function. */
-   if (taddr != IRTemp_INVALID) {
-      if (texpVal == IRTemp_INVALID) {
+   if (!isIRTempInvalid(taddr)) {
+      if (isIRTempInvalid(texpVal)) {
          vassert(restart_point == 0);
          storeLE( mkexpr(taddr), mkexpr(tres) );
       } else {
-         vassert(typeOfIRTemp(irsb->tyenv, texpVal) == ty);
+         vassert(typeOfIRTemp(irsb->stmts->tyenv, texpVal) == ty);
          /* .. and hence 'texpVal' has the same type as 'tres'. */
          casLE( mkexpr(taddr),
                 mkexpr(texpVal), mkexpr(tres), restart_point );
@@ -1186,7 +1187,7 @@ static void helper_SBB ( Int sz,
    IROp    minus = mkSizedOp(ty, Iop_Sub8);
    IROp    xor   = mkSizedOp(ty, Iop_Xor8);
 
-   vassert(typeOfIRTemp(irsb->tyenv, tres) == ty);
+   vassert(typeOfIRTemp(irsb->stmts->tyenv, tres) == ty);
    vassert(sz == 1 || sz == 2 || sz == 4);
    thunkOp = sz==4 ? X86G_CC_OP_SBBL 
                    : (sz==2 ? X86G_CC_OP_SBBW : X86G_CC_OP_SBBB);
@@ -1204,12 +1205,12 @@ static void helper_SBB ( Int sz,
 
    /* Possibly generate a store of 'tres' to 'taddr'.  See comment at
       start of this function. */
-   if (taddr != IRTemp_INVALID) {
-      if (texpVal == IRTemp_INVALID) {
+   if (!isIRTempInvalid(taddr)) {
+      if (isIRTempInvalid(texpVal)) {
          vassert(restart_point == 0);
          storeLE( mkexpr(taddr), mkexpr(tres) );
       } else {
-         vassert(typeOfIRTemp(irsb->tyenv, texpVal) == ty);
+         vassert(typeOfIRTemp(irsb->stmts->tyenv, texpVal) == ty);
          /* .. and hence 'texpVal' has the same type as 'tres'. */
          casLE( mkexpr(taddr),
                 mkexpr(texpVal), mkexpr(tres), restart_point );
@@ -1728,7 +1729,6 @@ IRTemp disAMode ( Int* len, UChar sorb, Int delta, HChar* buf )
 
       default:
          vpanic("disAMode(x86)");
-         return 0; /*notreached*/
    }
 }
 
@@ -1838,7 +1838,7 @@ UInt dis_op2_E_G ( UChar       sorb,
    IRTemp  src  = newTemp(ty);
    IRTemp  dst0 = newTemp(ty);
    UChar   rm   = getUChar(delta0);
-   IRTemp  addr = IRTemp_INVALID;
+   IRTemp  addr = IRTemp_INVALID();
 
    /* addSubCarry == True indicates the intended operation is
       add-with-carry or subtract-with-borrow. */
@@ -1861,12 +1861,12 @@ UInt dis_op2_E_G ( UChar       sorb,
 
       if (addSubCarry && op8 == Iop_Add8) {
          helper_ADC( size, dst1, dst0, src,
-                     /*no store*/IRTemp_INVALID, IRTemp_INVALID, 0 );
+                     /*no store*/IRTemp_INVALID(), IRTemp_INVALID(), 0 );
          putIReg(size, gregOfRM(rm), mkexpr(dst1));
       } else
       if (addSubCarry && op8 == Iop_Sub8) {
          helper_SBB( size, dst1, dst0, src,
-                     /*no store*/IRTemp_INVALID, IRTemp_INVALID, 0 );
+                     /*no store*/IRTemp_INVALID(), IRTemp_INVALID(), 0 );
          putIReg(size, gregOfRM(rm), mkexpr(dst1));
       } else {
          assign( dst1, binop(mkSizedOp(ty,op8), mkexpr(dst0), mkexpr(src)) );
@@ -1890,12 +1890,12 @@ UInt dis_op2_E_G ( UChar       sorb,
 
       if (addSubCarry && op8 == Iop_Add8) {
          helper_ADC( size, dst1, dst0, src,
-                     /*no store*/IRTemp_INVALID, IRTemp_INVALID, 0 );
+                     /*no store*/IRTemp_INVALID(), IRTemp_INVALID(), 0 );
          putIReg(size, gregOfRM(rm), mkexpr(dst1));
       } else
       if (addSubCarry && op8 == Iop_Sub8) {
          helper_SBB( size, dst1, dst0, src,
-                     /*no store*/IRTemp_INVALID, IRTemp_INVALID, 0 );
+                     /*no store*/IRTemp_INVALID(), IRTemp_INVALID(), 0 );
          putIReg(size, gregOfRM(rm), mkexpr(dst1));
       } else {
          assign( dst1, binop(mkSizedOp(ty,op8), mkexpr(dst0), mkexpr(src)) );
@@ -1951,7 +1951,7 @@ UInt dis_op2_G_E ( UChar       sorb,
    IRTemp  src  = newTemp(ty);
    IRTemp  dst0 = newTemp(ty);
    UChar   rm   = getIByte(delta0);
-   IRTemp  addr = IRTemp_INVALID;
+   IRTemp  addr = IRTemp_INVALID();
 
    /* addSubCarry == True indicates the intended operation is
       add-with-carry or subtract-with-borrow. */
@@ -1974,12 +1974,12 @@ UInt dis_op2_G_E ( UChar       sorb,
 
       if (addSubCarry && op8 == Iop_Add8) {
          helper_ADC( size, dst1, dst0, src,
-                     /*no store*/IRTemp_INVALID, IRTemp_INVALID, 0 );
+                     /*no store*/IRTemp_INVALID(), IRTemp_INVALID(), 0 );
          putIReg(size, eregOfRM(rm), mkexpr(dst1));
       } else
       if (addSubCarry && op8 == Iop_Sub8) {
          helper_SBB( size, dst1, dst0, src,
-                     /*no store*/IRTemp_INVALID, IRTemp_INVALID, 0 );
+                     /*no store*/IRTemp_INVALID(), IRTemp_INVALID(), 0 );
          putIReg(size, eregOfRM(rm), mkexpr(dst1));
       } else {
          assign(dst1, binop(mkSizedOp(ty,op8), mkexpr(dst0), mkexpr(src)));
@@ -2011,7 +2011,7 @@ UInt dis_op2_G_E ( UChar       sorb,
          } else {
             /* normal store */
             helper_ADC( size, dst1, dst0, src,
-                        /*store*/addr, IRTemp_INVALID, 0 );
+                        /*store*/addr, IRTemp_INVALID(), 0 );
          }
       } else
       if (addSubCarry && op8 == Iop_Sub8) {
@@ -2022,7 +2022,7 @@ UInt dis_op2_G_E ( UChar       sorb,
          } else {
             /* normal store */
             helper_SBB( size, dst1, dst0, src,
-                        /*store*/addr, IRTemp_INVALID, 0 );
+                        /*store*/addr, IRTemp_INVALID(), 0 );
          }
       } else {
          assign(dst1, binop(mkSizedOp(ty,op8), mkexpr(dst0), mkexpr(src)));
@@ -2168,12 +2168,12 @@ UInt dis_op_imm_A ( Int    size,
    else
    if (op8 == Iop_Add8 && carrying) {
       helper_ADC( size, dst1, dst0, src,
-                  /*no store*/IRTemp_INVALID, IRTemp_INVALID, 0 );
+                  /*no store*/IRTemp_INVALID(), IRTemp_INVALID(), 0 );
    }
    else
    if (op8 == Iop_Sub8 && carrying) {
       helper_SBB( size, dst1, dst0, src,
-                  /*no store*/IRTemp_INVALID, IRTemp_INVALID, 0 );
+                  /*no store*/IRTemp_INVALID(), IRTemp_INVALID(), 0 );
    }
    else
       vpanic("dis_op_imm_A(x86,guest)");
@@ -2291,7 +2291,7 @@ UInt dis_Grp1 ( UChar sorb, Bool locked,
    IRTemp  dst1 = newTemp(ty);
    IRTemp  src  = newTemp(ty);
    IRTemp  dst0 = newTemp(ty);
-   IRTemp  addr = IRTemp_INVALID;
+   IRTemp  addr = IRTemp_INVALID();
    IROp    op8  = Iop_INVALID;
    UInt    mask = sz==1 ? 0xFF : (sz==2 ? 0xFFFF : 0xFFFFFFFF);
 
@@ -2313,11 +2313,11 @@ UInt dis_Grp1 ( UChar sorb, Bool locked,
 
       if (gregOfRM(modrm) == 2 /* ADC */) {
          helper_ADC( sz, dst1, dst0, src,
-                     /*no store*/IRTemp_INVALID, IRTemp_INVALID, 0 );
+                     /*no store*/IRTemp_INVALID(), IRTemp_INVALID(), 0 );
       } else 
       if (gregOfRM(modrm) == 3 /* SBB */) {
          helper_SBB( sz, dst1, dst0, src,
-                     /*no store*/IRTemp_INVALID, IRTemp_INVALID, 0 );
+                     /*no store*/IRTemp_INVALID(), IRTemp_INVALID(), 0 );
       } else {
          assign(dst1, binop(mkSizedOp(ty,op8), mkexpr(dst0), mkexpr(src)));
          if (isAddSub(op8))
@@ -2346,7 +2346,7 @@ UInt dis_Grp1 ( UChar sorb, Bool locked,
          } else {
             /* normal store */
             helper_ADC( sz, dst1, dst0, src,
-                        /*store*/addr, IRTemp_INVALID, 0 );
+                        /*store*/addr, IRTemp_INVALID(), 0 );
          }
       } else 
       if (gregOfRM(modrm) == 3 /* SBB */) {
@@ -2357,7 +2357,7 @@ UInt dis_Grp1 ( UChar sorb, Bool locked,
          } else {
             /* normal store */
             helper_SBB( sz, dst1, dst0, src,
-                        /*store*/addr, IRTemp_INVALID, 0 );
+                        /*store*/addr, IRTemp_INVALID(), 0 );
          }
       } else {
          assign(dst1, binop(mkSizedOp(ty,op8), mkexpr(dst0), mkexpr(src)));
@@ -2400,7 +2400,7 @@ UInt dis_Grp2 ( UChar sorb,
    IRType ty    = szToITy(sz);
    IRTemp dst0  = newTemp(ty);
    IRTemp dst1  = newTemp(ty);
-   IRTemp addr  = IRTemp_INVALID;
+   IRTemp addr  = IRTemp_INVALID();
 
    *decode_OK = True;
 
@@ -2638,7 +2638,7 @@ UInt dis_Grp8_Imm ( UChar sorb,
    IRType ty     = szToITy(sz);
    IRTemp t2     = newTemp(Ity_I32);
    IRTemp t2m    = newTemp(Ity_I32);
-   IRTemp t_addr = IRTemp_INVALID;
+   IRTemp t_addr = IRTemp_INVALID();
    HChar  dis_buf[50];
    UInt   mask;
 
@@ -3043,10 +3043,10 @@ UInt dis_Grp5 ( UChar sorb, Bool locked, Int sz, Int delta,
    Int     len;
    UChar   modrm;
    HChar   dis_buf[50];
-   IRTemp  addr = IRTemp_INVALID;
+   IRTemp  addr = IRTemp_INVALID();
    IRType  ty = szToITy(sz);
    IRTemp  t1 = newTemp(ty);
-   IRTemp  t2 = IRTemp_INVALID;
+   IRTemp  t2 = IRTemp_INVALID();
 
    *decode_OK = True;
 
@@ -3172,14 +3172,14 @@ UInt dis_Grp5 ( UChar sorb, Bool locked, Int sz, Int delta,
 
 /* Code shared by all the string ops */
 static
-void dis_string_op_increment(Int sz, Int t_inc)
+void dis_string_op_increment(Int sz, IRTemp t_inc)
 {
    if (sz == 4 || sz == 2) {
-      assign( t_inc, 
+      assign( t_inc,
               binop(Iop_Shl32, IRExpr_Get( OFFB_DFLAG, Ity_I32 ),
                                mkU8(sz/2) ) );
    } else {
-      assign( t_inc, 
+      assign( t_inc,
               IRExpr_Get( OFFB_DFLAG, Ity_I32 ) );
    }
 }
@@ -3451,7 +3451,7 @@ static IRTemp gen_LZCNT ( IRType ty, IRTemp src )
 
 static void put_emwarn ( IRExpr* e /* :: Ity_I32 */ )
 {
-   vassert(typeOfIRExpr(irsb->tyenv, e) == Ity_I32);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, e) == Ity_I32);
    stmt( IRStmt_Put( OFFB_EMNOTE, e ) );
 }
 
@@ -3475,7 +3475,7 @@ static IRExpr* get_ftop ( void )
 
 static void put_ftop ( IRExpr* e )
 {
-   vassert(typeOfIRExpr(irsb->tyenv, e) == Ity_I32);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, e) == Ity_I32);
    stmt( IRStmt_Put( OFFB_FTOP, e ) );
 }
 
@@ -3527,7 +3527,7 @@ static IRExpr* /* :: Ity_I32 */ get_FAKE_roundingmode ( void )
 static void put_ST_TAG ( Int i, IRExpr* value )
 {
    IRRegArray* descr;
-   vassert(typeOfIRExpr(irsb->tyenv, value) == Ity_I8);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, value) == Ity_I8);
    descr = mkIRRegArray( OFFB_FPTAGS, Ity_I8, 8 );
    stmt( IRStmt_PutI( mkIRPutI(descr, get_ftop(), i, value) ) );
 }
@@ -3551,7 +3551,7 @@ static IRExpr* get_ST_TAG ( Int i )
 static void put_ST_UNCHECKED ( Int i, IRExpr* value )
 {
    IRRegArray* descr;
-   vassert(typeOfIRExpr(irsb->tyenv, value) == Ity_F64);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, value) == Ity_F64);
    descr = mkIRRegArray( OFFB_FPREGS, Ity_F64, 8 );
    stmt( IRStmt_PutI( mkIRPutI(descr, get_ftop(), i, value) ) );
    /* Mark the register as in-use. */
@@ -5141,7 +5141,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 7: { /* FNSTSW m16 */
                IRExpr* sw = get_FPU_sw();
-               vassert(typeOfIRExpr(irsb->tyenv, sw) == Ity_I16);
+               vassert(typeOfIRExpr(irsb->stmts->tyenv, sw) == Ity_I16);
                storeLE( mkexpr(addr), sw );
                DIP("fnstsw %s\n", dis_buf);
                break;
@@ -5543,7 +5543,7 @@ static IRExpr* getMMXReg ( UInt archreg )
 static void putMMXReg ( UInt archreg, IRExpr* e )
 {
    vassert(archreg < 8);
-   vassert(typeOfIRExpr(irsb->tyenv,e) == Ity_I64);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, e) == Ity_I64);
    stmt( IRStmt_Put( OFFB_FPREGS + 8 * archreg, e ) );
 }
 
@@ -6193,11 +6193,11 @@ UInt dis_SHLRD_Gv_Ev ( UChar sorb,
    IRType ty       = szToITy(sz);
    IRTemp gsrc     = newTemp(ty);
    IRTemp esrc     = newTemp(ty);
-   IRTemp addr     = IRTemp_INVALID;
+   IRTemp addr     = IRTemp_INVALID();
    IRTemp tmpSH    = newTemp(Ity_I8);
-   IRTemp tmpL     = IRTemp_INVALID;
-   IRTemp tmpRes   = IRTemp_INVALID;
-   IRTemp tmpSubSh = IRTemp_INVALID;
+   IRTemp tmpL     = IRTemp_INVALID();
+   IRTemp tmpRes   = IRTemp_INVALID();
+   IRTemp tmpSubSh = IRTemp_INVALID();
    IROp   mkpair;
    IROp   getres;
    IROp   shift;
@@ -6325,7 +6325,7 @@ UInt dis_bt_G_E ( const VexAbiInfo* vbi,
 
    t_fetched = t_bitno0 = t_bitno1 = t_bitno2 
              = t_addr0 = t_addr1 = t_esp 
-             = t_mask = t_new = IRTemp_INVALID;
+             = t_mask = t_new = IRTemp_INVALID();
 
    t_fetched = newTemp(Ity_I8);
    t_new     = newTemp(Ity_I8);
@@ -6652,7 +6652,7 @@ UInt dis_cmpxchg_G_E ( UChar       sorb,
    IRTemp dest2 = newTemp(ty);
    IRTemp acc2  = newTemp(ty);
    IRTemp cond  = newTemp(Ity_I1);
-   IRTemp addr  = IRTemp_INVALID;
+   IRTemp addr  = IRTemp_INVALID();
    UChar  rm    = getUChar(delta0);
 
    /* There are 3 cases to consider:
@@ -6708,7 +6708,7 @@ UInt dis_cmpxchg_G_E ( UChar       sorb,
       assign( src, getIReg(size, gregOfRM(rm)) );
       assign( acc, getIReg(size, R_EAX) );
       stmt( IRStmt_CAS( 
-         mkIRCAS( IRTemp_INVALID, dest, Iend_LE, mkexpr(addr), 
+         mkIRCAS( IRTemp_INVALID(), dest, Iend_LE, mkexpr(addr), 
                   NULL, mkexpr(acc), NULL, mkexpr(src) )
       ));
       setFlags_DEP1_DEP2(Iop_Sub8, acc, dest, ty);
@@ -7542,7 +7542,7 @@ static IRExpr* /* :: Ity_I32 */ get_sse_roundingmode ( void )
 
 static void put_sse_roundingmode ( IRExpr* sseround )
 {
-   vassert(typeOfIRExpr(irsb->tyenv, sseround) == Ity_I32);
+   vassert(typeOfIRExpr(irsb->stmts->tyenv, sseround) == Ity_I32);
    stmt( IRStmt_Put( OFFB_SSEROUND, sseround ) );
 }
 
@@ -7558,10 +7558,10 @@ static void breakup128to32s ( IRTemp t128,
    assign( hi64, unop(Iop_V128HIto64, mkexpr(t128)) );
    assign( lo64, unop(Iop_V128to64,   mkexpr(t128)) );
 
-   vassert(t0 && *t0 == IRTemp_INVALID);
-   vassert(t1 && *t1 == IRTemp_INVALID);
-   vassert(t2 && *t2 == IRTemp_INVALID);
-   vassert(t3 && *t3 == IRTemp_INVALID);
+   vassert(t0 && isIRTempInvalid(*t0));
+   vassert(t1 && isIRTempInvalid(*t1));
+   vassert(t2 && isIRTempInvalid(*t2));
+   vassert(t3 && isIRTempInvalid(*t3));
 
    *t0 = newTemp(Ity_I32);
    *t1 = newTemp(Ity_I32);
@@ -7597,10 +7597,10 @@ static void breakup64to16s ( IRTemp t64,
    assign( hi32, unop(Iop_64HIto32, mkexpr(t64)) );
    assign( lo32, unop(Iop_64to32,   mkexpr(t64)) );
 
-   vassert(t0 && *t0 == IRTemp_INVALID);
-   vassert(t1 && *t1 == IRTemp_INVALID);
-   vassert(t2 && *t2 == IRTemp_INVALID);
-   vassert(t3 && *t3 == IRTemp_INVALID);
+   vassert(t0 && isIRTempInvalid(*t0));
+   vassert(t1 && isIRTempInvalid(*t1));
+   vassert(t2 && isIRTempInvalid(*t2));
+   vassert(t3 && isIRTempInvalid(*t3));
 
    *t0 = newTemp(Ity_I16);
    *t1 = newTemp(Ity_I16);
@@ -7642,7 +7642,7 @@ void set_EFLAGS_from_value ( IRTemp t1,
                              Bool   emit_AC_emwarn,
                              Addr32 next_insn_EIP )
 {
-   vassert(typeOfIRTemp(irsb->tyenv,t1) == Ity_I32);
+   vassert(typeOfIRTemp(irsb->stmts->tyenv,t1) == Ity_I32);
 
    /* t1 is the flag word.  Mask out everything except OSZACP and set
       the flags thunk to X86G_CC_OP_COPY. */
@@ -8050,8 +8050,6 @@ static IRTemp math_BSWAP ( IRTemp t1, IRType ty )
       return t2;
    }
    vassert(0);
-   /*NOTREACHED*/
-   return IRTemp_INVALID;
 }
 
 /*------------------------------------------------------------*/
@@ -8118,7 +8116,7 @@ DisResult disInstr_X86_WRK (
 
    *expect_CAS = False;
 
-   addr = t0 = t1 = t2 = t3 = t4 = t5 = t6 = IRTemp_INVALID; 
+   addr = t0 = t1 = t2 = t3 = t4 = t5 = t6 = IRTemp_INVALID(); 
 
    vassert(guest_EIP_bbstart + delta == guest_EIP_curr_instr);
    DIP("\t0x%x:  ", guest_EIP_bbstart+delta);
@@ -9046,7 +9044,7 @@ DisResult disInstr_X86_WRK (
    if (sz == 4 && insn[0] == 0x0F && insn[1] == 0x70) {
       Int order;
       IRTemp sV, dV, s3, s2, s1, s0;
-      s3 = s2 = s1 = s0 = IRTemp_INVALID;
+      s3 = s2 = s1 = s0 = IRTemp_INVALID();
       sV = newTemp(Ity_I64);
       dV = newTemp(Ity_I64);
       do_MMX_preamble();
@@ -9397,7 +9395,7 @@ DisResult disInstr_X86_WRK (
       IRTemp s3, s2, s1, s0, d3, d2, d1, d0;
       sV = newTemp(Ity_V128);
       dV = newTemp(Ity_V128);
-      s3 = s2 = s1 = s0 = d3 = d2 = d1 = d0 = IRTemp_INVALID;
+      s3 = s2 = s1 = s0 = d3 = d2 = d1 = d0 = IRTemp_INVALID();
       modrm = insn[2];
       assign( dV, getXMMReg(gregOfRM(modrm)) );
 
@@ -9498,7 +9496,7 @@ DisResult disInstr_X86_WRK (
       Bool hi = toBool(insn[1] == 0x15);
       sV = newTemp(Ity_V128);
       dV = newTemp(Ity_V128);
-      s3 = s2 = s1 = s0 = d3 = d2 = d1 = d0 = IRTemp_INVALID;
+      s3 = s2 = s1 = s0 = d3 = d2 = d1 = d0 = IRTemp_INVALID();
       modrm = insn[2];
       assign( dV, getXMMReg(gregOfRM(modrm)) );
 
@@ -11157,7 +11155,7 @@ DisResult disInstr_X86_WRK (
       IRTemp s3, s2, s1, s0, d3, d2, d1, d0;
       sV = newTemp(Ity_V128);
       dV = newTemp(Ity_V128);
-      s3 = s2 = s1 = s0 = d3 = d2 = d1 = d0 = IRTemp_INVALID;
+      s3 = s2 = s1 = s0 = d3 = d2 = d1 = d0 = IRTemp_INVALID();
       t1 = newTemp(Ity_I64);
       t0 = newTemp(Ity_I64);
       modrm = insn[2];
@@ -11243,7 +11241,7 @@ DisResult disInstr_X86_WRK (
    if (sz == 2 && insn[0] == 0x0F && insn[1] == 0x70) {
       Int order;
       IRTemp sV, dV, s3, s2, s1, s0;
-      s3 = s2 = s1 = s0 = IRTemp_INVALID;
+      s3 = s2 = s1 = s0 = IRTemp_INVALID();
       sV = newTemp(Ity_V128);
       dV = newTemp(Ity_V128);
       modrm = insn[2];
@@ -11281,7 +11279,7 @@ DisResult disInstr_X86_WRK (
    if (insn[0] == 0xF3 && insn[1] == 0x0F && insn[2] == 0x70) {
       Int order;
       IRTemp sVhi, dVhi, sV, dV, s3, s2, s1, s0;
-      s3 = s2 = s1 = s0 = IRTemp_INVALID;
+      s3 = s2 = s1 = s0 = IRTemp_INVALID();
       sV   = newTemp(Ity_V128);
       dV   = newTemp(Ity_V128);
       sVhi = newTemp(Ity_I64);
@@ -11325,7 +11323,7 @@ DisResult disInstr_X86_WRK (
    if (insn[0] == 0xF2 && insn[1] == 0x0F && insn[2] == 0x70) {
       Int order;
       IRTemp sVlo, dVlo, sV, dV, s3, s2, s1, s0;
-      s3 = s2 = s1 = s0 = IRTemp_INVALID;
+      s3 = s2 = s1 = s0 = IRTemp_INVALID();
       sV   = newTemp(Ity_V128);
       dV   = newTemp(Ity_V128);
       sVlo = newTemp(Ity_I64);
@@ -11802,7 +11800,7 @@ DisResult disInstr_X86_WRK (
       IRTemp s3, s2, s1, s0;
       IRTemp sV  = newTemp(Ity_V128);
       Bool   isH = insn[2] == 0x16;
-      s3 = s2 = s1 = s0 = IRTemp_INVALID;
+      s3 = s2 = s1 = s0 = IRTemp_INVALID();
 
       modrm = insn[3];
       if (epartIsReg(modrm)) {
@@ -11861,7 +11859,7 @@ DisResult disInstr_X86_WRK (
       IRTemp addV = newTemp(Ity_V128);
       IRTemp subV = newTemp(Ity_V128);
       IRTemp rm     = newTemp(Ity_I32);
-      a3 = a2 = a1 = a0 = s3 = s2 = s1 = s0 = IRTemp_INVALID;
+      a3 = a2 = a1 = a0 = s3 = s2 = s1 = s0 = IRTemp_INVALID();
 
       modrm = insn[3];
       if (epartIsReg(modrm)) {
@@ -11940,7 +11938,7 @@ DisResult disInstr_X86_WRK (
       IRTemp rm     = newTemp(Ity_I32);
       Bool   isAdd  = insn[2] == 0x7C;
       const HChar* str = isAdd ? "add" : "sub";
-      e3 = e2 = e1 = e0 = g3 = g2 = g1 = g0 = IRTemp_INVALID;
+      e3 = e2 = e1 = e0 = g3 = g2 = g1 = g0 = IRTemp_INVALID();
 
       modrm = insn[3];
       if (epartIsReg(modrm)) {
@@ -15450,13 +15448,13 @@ DisResult disInstr_X86 ( IRSB*        irsb_IN,
    guest_EIP_curr_instr = (Addr32)guest_IP;
    guest_EIP_bbstart    = (Addr32)toUInt(guest_IP - delta);
 
-   x1 = irsb_IN->stmts_used;
+   x1 = irsb_IN->stmts->stmts_used;
    expect_CAS = False;
    dres = disInstr_X86_WRK ( &expect_CAS, resteerOkFn,
                              resteerCisOk,
                              callback_opaque,
                              delta, archinfo, abiinfo, sigill_diag_IN );
-   x2 = irsb_IN->stmts_used;
+   x2 = irsb_IN->stmts->stmts_used;
    vassert(x2 >= x1);
 
    /* See comment at the top of disInstr_X86_WRK for meaning of
@@ -15464,7 +15462,7 @@ DisResult disInstr_X86 ( IRSB*        irsb_IN,
       IRCAS as directed by the returned expect_CAS value. */
    has_CAS = False;
    for (i = x1; i < x2; i++) {
-      if (irsb_IN->stmts[i]->tag == Ist_CAS)
+      if (irsb_IN->stmts->stmts[i]->tag == Ist_CAS)
          has_CAS = True;
    }
 
@@ -15478,7 +15476,7 @@ DisResult disInstr_X86 ( IRSB*        irsb_IN,
                                 delta, archinfo, abiinfo, sigill_diag_IN );
       for (i = x1; i < x2; i++) {
          vex_printf("\t\t");
-         ppIRStmt(irsb_IN->stmts[i]);
+         ppIRStmt(irsb_IN->stmts->stmts[i]);
          vex_printf("\n");
       }
       /* Failure of this assertion is serious and denotes a bug in

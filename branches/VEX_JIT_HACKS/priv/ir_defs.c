@@ -1693,7 +1693,7 @@ void ppIRTypeEnv ( const IRTypeEnv* env )
    for (UInt i = 0; i < env->types_used; i++) {
       if (i % 8 == 0)
          vex_printf( "   ");
-      IRTemp temp = {env->id, i};
+      IRTemp temp = mkIRTemp(env->id, i);
       ppIRTemp(temp);
       vex_printf("=");
       ppIRType(env->types[i]);
@@ -3739,8 +3739,7 @@ IRTemp newIRTemp ( IRTypeEnv* env, IRType ty )
 
    if (env->types_used < env->types_size) {
       env->types[env->types_used] = ty;
-      IRTemp tmp = {env->id, env->types_used++};
-      return tmp;
+      return mkIRTemp(env->id, env->types_used++);
    } else {
       Int i;
       Int new_size = env->types_size==0 ? 8 : 2*env->types_size;
@@ -5008,7 +5007,7 @@ void sanityCheckIRStmtVec(const IRSB* bb, const IRStmtVec* stmts,
 
    /* Ensure each temp has a plausible type. */
    for (UInt i = 0; i < n_temps; i++) {
-      IRTemp temp = {id, i};
+      IRTemp temp = mkIRTemp(id, i);
       IRType ty = typeOfIRTemp(tyenv, temp);
       if (!isPlausibleIRType(ty)) {
          vex_printf("Temp ");
