@@ -192,18 +192,20 @@ typedef
 
 static HReg lookupIRTemp ( ISelEnv* env, IRTemp tmp )
 {
-   vassert(tmp >= 0);
-   vassert(tmp < env->n_vregmap);
-   return env->vregmap[tmp];
+   vassert(tmp.id == 0); // TODO-JIT: assume now only IRTypeEnv ID #0
+   vassert(tmp.index >= 0);
+   vassert(tmp.index < env->n_vregmap);
+   return env->vregmap[tmp.index];
 }
 
 static void lookupIRTemp64 ( HReg* vrHI, HReg* vrLO, ISelEnv* env, IRTemp tmp )
 {
-   vassert(tmp >= 0);
-   vassert(tmp < env->n_vregmap);
-   vassert(! hregIsInvalid(env->vregmapHI[tmp]));
-   *vrLO = env->vregmap[tmp];
-   *vrHI = env->vregmapHI[tmp];
+   vassert(tmp.id == 0); // TODO-JIT: assume now only IRTypeEnv ID #0
+   vassert(tmp.index >= 0);
+   vassert(tmp.index < env->n_vregmap);
+   vassert(! hregIsInvalid(env->vregmapHI[tmp.index]));
+   *vrLO = env->vregmap[tmp.index];
+   *vrHI = env->vregmapHI[tmp.index];
 }
 
 static void addInstr ( ISelEnv* env, X86Instr* instr )
@@ -4089,7 +4091,7 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
 
       /* Figure out the return type, if any. */
       IRType retty = Ity_INVALID;
-      if (d->tmp != IRTemp_INVALID)
+      if (!isIRTempInvalid(d->tmp))
          retty = typeOfIRTemp(env->type_env, d->tmp);
 
       Bool retty_ok = False;
@@ -4116,7 +4118,7 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
       switch (retty) {
          case Ity_INVALID: {
             /* No return value.  Nothing to do. */
-            vassert(d->tmp == IRTemp_INVALID);
+            vassert(isIRTempInvalid(d->tmp));
             vassert(rloc.pri == RLPri_None);
             vassert(addToSp == 0);
             return;
@@ -4174,7 +4176,7 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
 
    /* --------- ACAS --------- */
    case Ist_CAS:
-      if (stmt->Ist.CAS.details->oldHi == IRTemp_INVALID) {
+      if (isIRTempInvalid(stmt->Ist.CAS.details->oldHi)) {
          /* "normal" singleton CAS */
          UChar  sz;
          IRCAS* cas = stmt->Ist.CAS.details;
@@ -4455,11 +4457,13 @@ HInstrArray* iselSB_X86 ( const IRSB* bb,
    env->code = newHInstrArray();
 
    /* Copy BB's type env. */
-   env->type_env = bb->tyenv;
+   /* TODO-JIT: Works only with IRTypeEnv ID #0. */
+   vassert(bb->stmts->tyenv->id == 0);
+   env->type_env = bb->stmts->tyenv;
 
    /* Make up an IRTemp -> virtual HReg mapping.  This doesn't
       change as we go along. */
-   env->n_vregmap = bb->tyenv->types_used;
+   env->n_vregmap = bb->stmts->tyenv->types_used;
    env->vregmap   = LibVEX_Alloc_inline(env->n_vregmap * sizeof(HReg));
    env->vregmapHI = LibVEX_Alloc_inline(env->n_vregmap * sizeof(HReg));
 
@@ -4473,7 +4477,7 @@ HInstrArray* iselSB_X86 ( const IRSB* bb,
    j = 0;
    for (i = 0; i < env->n_vregmap; i++) {
       hregHI = hreg = INVALID_HREG;
-      switch (bb->tyenv->types[i]) {
+      switch (bb->stmts->tyenv->types[i]) {
          case Ity_I1:
          case Ity_I8:
          case Ity_I16:
@@ -4483,7 +4487,7 @@ HInstrArray* iselSB_X86 ( const IRSB* bb,
          case Ity_F32:
          case Ity_F64:  hreg   = mkHReg(True, HRcFlt64,  0, j++); break;
          case Ity_V128: hreg   = mkHReg(True, HRcVec128, 0, j++); break;
-         default: ppIRType(bb->tyenv->types[i]);
+         default: ppIRType(bb->stmts->tyenv->types[i]);
                   vpanic("iselBB: IRTemp type");
       }
       env->vregmap[i]   = hreg;
@@ -4505,8 +4509,8 @@ HInstrArray* iselSB_X86 ( const IRSB* bb,
    }
 
    /* Ok, finally we can iterate over the statements. */
-   for (i = 0; i < bb->stmts_used; i++)
-      iselStmt(env, bb->stmts[i]);
+   for (i = 0; i < bb->stmts->stmts_used; i++)
+      iselStmt(env, bb->stmts->stmts[i]);
 
    iselNext(env, bb->next, bb->jumpkind, bb->offsIP);
 
