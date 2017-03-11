@@ -54,15 +54,17 @@
    'IRSB').  Each code block typically represents from 1 to perhaps 50
    instructions.  IRSBs are single-entry, multiple-exit code blocks.
    Each IRSB contains three things:
-   - a type environment, which indicates the type of each temporary
-     value present in the IRSB
-   - a list of statements, which represent code
-   - a jump that exits from the end the IRSB
-   Because the blocks are multiple-exit, there can be additional
-   conditional exit statements that cause control to leave the IRSB
-   before the final exit.  Also because of this, IRSBs can cover
-   multiple non-consecutive sequences of code (up to 3).  These are
-   recorded in the type VexGuestExtents (see libvex.h).
+   - a vector of statements, which represent code, together with the associated
+     type environment (which indicates the type of each temporary value present
+     in statements)
+   - a jump that exits from the end of the IRSB
+   Flow control can leave the IRSB before the final exit only in a leg of an
+   "if-then-else" statement. A leg of an "if-then-else" statement is de facto
+   another vector of statements and as such has also its type environment.
+   "If-then-else" statements can be nested, however this is currently not
+   supported.
+   IRSBs can cover multiple non-consecutive sequences of code (up to 3).
+   These are recorded in the type VexGuestExtents (see libvex.h).
 
    Statements and expressions
    ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -105,10 +107,10 @@
    One Vex IR translation for this code would be this:
 
      ------ IMark(0x24F275, 7, 0) ------
-     t3 = GET:I32(0)             # get %eax, a 32-bit integer
-     t2 = GET:I32(12)            # get %ebx, a 32-bit integer
-     t1 = Add32(t3,t2)           # addl
-     PUT(0) = t1                 # put %eax
+     t0:3 = GET:I32(0)           # get %eax, a 32-bit integer
+     t0:2 = GET:I32(12)          # get %ebx, a 32-bit integer
+     t0:1 = Add32(t0:3,t0:2)     # addl
+     PUT(0) = t1:1               # put %eax
 
    (For simplicity, this ignores the effects on the condition codes, and
    the update of the instruction pointer.)
@@ -122,7 +124,7 @@
 
    The five statements in this example are:
    - the IMark
-   - three assignments to temporaries
+   - three assignments to temporaries (they all belong to type environment ID 0)
    - one register write (put)
 
    The six expressions in this example are:
@@ -148,11 +150,11 @@
    updates):
 
      ------ IMark(0x4000ABA, 3, 0) ------
-     t3 = Add32(GET:I32(0),0x4:I32)
-     t2 = LDle:I32(t3)
-     t1 = GET:I32(8)
-     t0 = Add32(t2,t1)
-     STle(t3) = t0
+     t0:3 = Add32(GET:I32(0),0x4:I32)
+     t0:2 = LDle:I32(t0:3)
+     t0:1 = GET:I32(8)
+     t0:0 = Add32(t0:2,t0:1)
+     STle(t0:3) = t0:0
 
    The "le" in "LDle" and "STle" is short for "little-endian".
 
@@ -389,16 +391,42 @@ extern Bool eqIRRegArray ( const IRRegArray*, const IRRegArray* );
 
 /* ------------------ Temporaries ------------------ */
 
-/* This represents a temporary, eg. t1.  The IR optimiser relies on the
-   fact that IRTemps are 32-bit ints.  Do not change them to be ints of
-   any other size. */
-typedef UInt IRTemp;
+/* These represent IR SSA temporaries. A temporary is uniquely identified by its
+   type environment id and local index, such as (3, 1). Such a temporary belongs
+   to type environment id 3 and its local index within this type environment
+   is 1. Shorter representation would be t3:1.
+
+   The IR optimiser relies on the fact that IRTemps are 32-bit ints (16 bits for
+   type environment id and 16 bits for local index). Do not change them to
+   be ints of any other size. */
+
+typedef UShort IRTyEnvID;
+typedef UShort IRTyEnvIndex;
+
+#define IRTyEnvID_INVALID    ((IRTyEnvID)    0xFFFF)
+#define IRTyEnvIndex_INVALID ((IRTyEnvIndex) 0xFFFF)
+
+typedef
+   struct {
+      IRTyEnvID    id;
+      IRTyEnvIndex index;
+   }
+   IRTemp;
+
+#define IRTemp_INVALID {IRTyEnvID_INVALID, IRTyEnvIndex_INVALID}
 
 /* Pretty-print an IRTemp. */
 extern void ppIRTemp ( IRTemp );
 
-#define IRTemp_INVALID ((IRTemp)0xFFFFFFFF)
+static inline Bool isIRTempInvalid(IRTemp tmp)
+{
+   return (tmp.id == IRTyEnvID_INVALID && tmp.index == IRTyEnvIndex_INVALID);
+}
 
+static inline Bool eqIRTemp(IRTemp t1, IRTemp t2)
+{
+   return toBool(t1.id == t2.id && t1.index == t2.index);
+}
 
 /* --------------- Primops (arity 1,2,3 and 4) --------------- */
 
@@ -2687,8 +2715,111 @@ extern IRLoadG* mkIRLoadG ( IREndness end, IRLoadGOp cvt,
                             IRTemp dst, IRExpr* addr, IRExpr* alt, 
                             IRExpr* guard );
 
+/* ------------------ Phi Nodes ------------------ */
+
+/* Assigns result of phi(src1, src2) to a temporary.
+   A "phi" function is special "phony" function that does not have its
+   corresponding machine operation. Let's consider this example:
+      if (cond) {
+         t0:1 = 3
+      } else {
+         t0:1 = 4
+      }
+   However this is not possible under SSA rules (a temporary cannot be assigned
+   more than once). Now the "phi" function comes handy:
+      if (cond) {
+         t1:1 = 3
+      } else {
+         t2:1 = 4
+      }
+      t0:1 = phi(t1:1,t2:1)
+*/
+typedef
+   struct {
+      IRTemp dst;
+      IRTemp srcThen;
+      IRTemp srcElse;
+   }
+   IRPhi;
+
+typedef
+   struct {
+      IRPhi** phis;
+      UInt    phis_size;
+      UInt    phis_used;
+   }
+   IRPhiVec;
+
+extern void ppIRPhi(const IRPhi*);
+extern IRPhi* mkIRPhi(IRTemp, IRTemp, IRTemp);
+extern IRPhi* deepCopyIRPhi(const IRPhi*);
+extern void ppIRPhiVec(const IRPhiVec*);
+extern IRPhiVec* emptyIRPhiVec(void);
+extern IRPhiVec* deepCopyIRPhiVec(const IRPhiVec*);
+
+
+/* ------------------ Type Environments ------------------ */
+
+/* Type environments: a bunch of statements, expressions, etc, are incomplete
+   without an environment indicating the type of each IRTemp. So this provides
+   one. The array, 0 .. n_types_used-1, is indexed by "local index" component
+   of IR temporaries. The type environment ID is used to uniquely identify
+   temporaries across multiple IRStmtVec in an IRSB.
+*/
+typedef
+   struct {
+      IRType*   types;
+      Int       types_size;
+      Int       types_used;
+      IRTyEnvID id;
+   }
+   IRTypeEnv;
+
+/* Obtain a new IRTemp */
+extern IRTemp newIRTemp(IRTypeEnv*, IRType);
+
+/* Deep-copy a type environment */
+extern IRTypeEnv* deepCopyIRTypeEnv(const IRTypeEnv* src);
+
+/* Pretty-print a type environment */
+extern void ppIRTypeEnv(const IRTypeEnv*);
+
 
 /* ------------------ Statements ------------------ */
+
+/* IRStmt and IRStmtVec are mutually recursive. */
+typedef
+   struct _IRStmt
+   IRStmt;
+
+/* Vector of statements which contains:
+   - Type environment
+   - Statements
+   - A unique IRTyEnvID
+   - Parent, which points to the parent IRStmtVec. Because "if-then-else"
+     statements cannot be currently nested, the parent is either NULL or points
+     to IRStmtVec with type environment ID #0.
+*/
+typedef
+   struct _IRStmtVec {
+      IRTypeEnv*         tyenv;
+      IRStmt**           stmts;
+      UInt               stmts_size;
+      UInt               stmts_used;
+      struct _IRStmtVec* parent;
+   }
+   IRStmtVec;
+
+extern void ppIRStmtVec(const IRStmtVec*);
+
+/* Allocates an empty IRStmtVec with an invalid IRTyEnvID.
+   Such an IRStmtVec needs to have a valid IRTyEnvId - get it from
+   nextIRTyEnvID(). Only after this is done, then such an IRStmtVec is ready
+   for newIRTemp() to give out new temporaries. */
+extern IRStmtVec* emptyIRStmtVec(void);
+
+extern IRStmtVec* deepCopyIRStmtVec(const IRStmtVec* src, IRStmtVec* parent);
+
 
 /* The different kinds of statements.  Their meaning is explained
    below in the comments for IRStmt.
@@ -2715,8 +2846,9 @@ typedef
       Ist_LLSC,
       Ist_Dirty,
       Ist_MBE,
-      Ist_Exit
-   } 
+      Ist_Exit,
+      Ist_IfThenElse
+   }
    IRStmtTag;
 
 /* A statement.  Stored as a tagged union.  'tag' indicates what kind
@@ -2728,237 +2860,258 @@ typedef
    For each kind of statement, we show what it looks like when
    pretty-printed with ppIRStmt().
 */
-typedef
-   struct _IRStmt {
-      IRStmtTag tag;
-      union {
-         /* A no-op (usually resulting from IR optimisation).  Can be
-            omitted without any effect.
+struct _IRStmt {
+   IRStmtTag tag;
+   union {
+      /* A no-op (usually resulting from IR optimisation).  Can be
+         omitted without any effect.
 
-            ppIRStmt output: IR-NoOp
-         */
-         struct {
-	 } NoOp;
+         ppIRStmt output: IR-NoOp
+      */
+      struct {
+      } NoOp;
 
-         /* META: instruction mark.  Marks the start of the statements
-            that represent a single machine instruction (the end of
-            those statements is marked by the next IMark or the end of
-            the IRSB).  Contains the address and length of the
-            instruction.
+      /* META: instruction mark.  Marks the start of the statements
+         that represent a single machine instruction (the end of
+         those statements is marked by the next IMark or the end of
+         the IRSB).  Contains the address and length of the
+         instruction.
 
-            It also contains a delta value.  The delta must be
-            subtracted from a guest program counter value before
-            attempting to establish, by comparison with the address
-            and length values, whether or not that program counter
-            value refers to this instruction.  For x86, amd64, ppc32,
-            ppc64 and arm, the delta value is zero.  For Thumb
-            instructions, the delta value is one.  This is because, on
-            Thumb, guest PC values (guest_R15T) are encoded using the
-            top 31 bits of the instruction address and a 1 in the lsb;
-            hence they appear to be (numerically) 1 past the start of
-            the instruction they refer to.  IOW, guest_R15T on ARM
-            holds a standard ARM interworking address.
+         It also contains a delta value.  The delta must be
+         subtracted from a guest program counter value before
+         attempting to establish, by comparison with the address
+         and length values, whether or not that program counter
+         value refers to this instruction.  For x86, amd64, ppc32,
+         ppc64 and arm, the delta value is zero.  For Thumb
+         instructions, the delta value is one.  This is because, on
+         Thumb, guest PC values (guest_R15T) are encoded using the
+         top 31 bits of the instruction address and a 1 in the lsb;
+         hence they appear to be (numerically) 1 past the start of
+         the instruction they refer to.  IOW, guest_R15T on ARM
+         holds a standard ARM interworking address.
 
-            ppIRStmt output: ------ IMark(<addr>, <len>, <delta>) ------,
-                         eg. ------ IMark(0x4000792, 5, 0) ------,
-         */
-         struct {
-            Addr   addr;   /* instruction address */
-            UInt   len;    /* instruction length */
-            UChar  delta;  /* addr = program counter as encoded in guest state
-                                     - delta */
-         } IMark;
+         ppIRStmt output: ------ IMark(<addr>, <len>, <delta>) ------,
+                      eg. ------ IMark(0x4000792, 5, 0) ------,
+      */
+      struct {
+         Addr   addr;   /* instruction address */
+         UInt   len;    /* instruction length */
+         UChar  delta;  /* addr = program counter as encoded in guest state
+                                  - delta */
+      } IMark;
 
-         /* META: An ABI hint, which says something about this
-            platform's ABI.
+      /* META: An ABI hint, which says something about this
+         platform's ABI.
 
-            At the moment, the only AbiHint is one which indicates
-            that a given chunk of address space, [base .. base+len-1],
-            has become undefined.  This is used on amd64-linux and
-            some ppc variants to pass stack-redzoning hints to whoever
-            wants to see them.  It also indicates the address of the
-            next (dynamic) instruction that will be executed.  This is
-            to help Memcheck to origin tracking.
+         At the moment, the only AbiHint is one which indicates
+         that a given chunk of address space, [base .. base+len-1],
+         has become undefined.  This is used on amd64-linux and
+         some ppc variants to pass stack-redzoning hints to whoever
+         wants to see them.  It also indicates the address of the
+         next (dynamic) instruction that will be executed.  This is
+         to help Memcheck to origin tracking.
 
-            ppIRStmt output: ====== AbiHint(<base>, <len>, <nia>) ======
-                         eg. ====== AbiHint(t1, 16, t2) ======
-         */
-         struct {
-            IRExpr* base;     /* Start  of undefined chunk */
-            Int     len;      /* Length of undefined chunk */
-            IRExpr* nia;      /* Address of next (guest) insn */
-         } AbiHint;
+         ppIRStmt output: ====== AbiHint(<base>, <len>, <nia>) ======
+                      eg. ====== AbiHint(t1:7, 16, t1:2) ======
+      */
+      struct {
+         IRExpr* base;     /* Start  of undefined chunk */
+         Int     len;      /* Length of undefined chunk */
+         IRExpr* nia;      /* Address of next (guest) insn */
+      } AbiHint;
 
-         /* Write a guest register, at a fixed offset in the guest state.
-            ppIRStmt output: PUT(<offset>) = <data>, eg. PUT(60) = t1
-         */
-         struct {
-            Int     offset;   /* Offset into the guest state */
-            IRExpr* data;     /* The value to write */
-         } Put;
+      /* Write a guest register, at a fixed offset in the guest state.
+         ppIRStmt output: PUT(<offset>) = <data>, eg. PUT(60) = t1:7
+      */
+      struct {
+         Int     offset;   /* Offset into the guest state */
+         IRExpr* data;     /* The value to write */
+      } Put;
 
-         /* Write a guest register, at a non-fixed offset in the guest
-            state.  See the comment for GetI expressions for more
-            information.
+      /* Write a guest register, at a non-fixed offset in the guest
+         state.  See the comment for GetI expressions for more
+         information.
 
-            ppIRStmt output: PUTI<descr>[<ix>,<bias>] = <data>,
-                         eg. PUTI(64:8xF64)[t5,0] = t1
-         */
-         struct {
-            IRPutI* details;
-         } PutI;
+         ppIRStmt output: PUTI<descr>[<ix>,<bias>] = <data>,
+                      eg. PUTI(64:8xF64)[t5,0] = t1:7
+      */
+      struct {
+         IRPutI* details;
+      } PutI;
 
-         /* Assign a value to a temporary.  Note that SSA rules require
-            each tmp is only assigned to once.  IR sanity checking will
-            reject any block containing a temporary which is not assigned
-            to exactly once.
+      /* Assign a value to a temporary.  Note that SSA rules require
+         each tmp is only assigned to once.  IR sanity checking will
+         reject any block containing a temporary which is not assigned
+         to exactly once.
 
-            ppIRStmt output: t<tmp> = <data>, eg. t1 = 3
-         */
-         struct {
-            IRTemp  tmp;   /* Temporary  (LHS of assignment) */
-            IRExpr* data;  /* Expression (RHS of assignment) */
-         } WrTmp;
+         ppIRStmt output: t<tmp> = <data>, eg. t1:7 = 3
+      */
+      struct {
+         IRTemp  tmp;   /* Temporary  (LHS of assignment) */
+         IRExpr* data;  /* Expression (RHS of assignment) */
+      } WrTmp;
 
-         /* Write a value to memory.  This is a normal store, not a
-            Store-Conditional.  To represent a Store-Conditional,
-            instead use IRStmt.LLSC.
-            ppIRStmt output: ST<end>(<addr>) = <data>, eg. STle(t1) = t2
-         */
-         struct {
-            IREndness end;    /* Endianness of the store */
-            IRExpr*   addr;   /* store address */
-            IRExpr*   data;   /* value to write */
-         } Store;
+      /* Write a value to memory.  This is a normal store, not a
+         Store-Conditional.  To represent a Store-Conditional,
+         instead use IRStmt.LLSC.
+         ppIRStmt output: ST<end>(<addr>) = <data>, eg. STle(t1:7) = t1:6
+      */
+      struct {
+         IREndness end;    /* Endianness of the store */
+         IRExpr*   addr;   /* store address */
+         IRExpr*   data;   /* value to write */
+      } Store;
 
-         /* Guarded store.  Note that this is defined to evaluate all
-            expression fields (addr, data) even if the guard evaluates
-            to false.
-            ppIRStmt output:
-              if (<guard>) ST<end>(<addr>) = <data> */
-         struct {
-            IRStoreG* details;
-         } StoreG;
+      /* Guarded store.  Note that this is defined to evaluate all
+         expression fields (addr, data) even if the guard evaluates
+         to false.
+         ppIRStmt output:
+           if (<guard>) ST<end>(<addr>) = <data> */
+      struct {
+         IRStoreG* details;
+      } StoreG;
 
-         /* Guarded load.  Note that this is defined to evaluate all
-            expression fields (addr, alt) even if the guard evaluates
-            to false.
-            ppIRStmt output:
-              t<tmp> = if (<guard>) <cvt>(LD<end>(<addr>)) else <alt> */
-         struct {
-            IRLoadG* details;
-         } LoadG;
+      /* Guarded load.  Note that this is defined to evaluate all
+         expression fields (addr, alt) even if the guard evaluates
+         to false.
+         ppIRStmt output:
+           t<tmp> = if (<guard>) <cvt>(LD<end>(<addr>)) else <alt> */
+      struct {
+         IRLoadG* details;
+      } LoadG;
 
-         /* Do an atomic compare-and-swap operation.  Semantics are
-            described above on a comment at the definition of IRCAS.
+      /* Do an atomic compare-and-swap operation.  Semantics are
+         described above on a comment at the definition of IRCAS.
 
-            ppIRStmt output:
-               t<tmp> = CAS<end>(<addr> :: <expected> -> <new>)
-            eg
-               t1 = CASle(t2 :: t3->Add32(t3,1))
-               which denotes a 32-bit atomic increment 
-               of a value at address t2
+         ppIRStmt output:
+            t<tmp> = CAS<end>(<addr> :: <expected> -> <new>)
+         eg
+            t0:1 = CASle(t0:2 :: t0:3->Add32(t0:3,1))
+            which denotes a 32-bit atomic increment 
+            of a value at address t2
 
-            A double-element CAS may also be denoted, in which case <tmp>,
-            <expected> and <new> are all pairs of items, separated by
-            commas.
-         */
-         struct {
-            IRCAS* details;
-         } CAS;
+         A double-element CAS may also be denoted, in which case <tmp>,
+         <expected> and <new> are all pairs of items, separated by
+         commas.
+      */
+      struct {
+         IRCAS* details;
+      } CAS;
 
-         /* Either Load-Linked or Store-Conditional, depending on
-            STOREDATA.
+      /* Either Load-Linked or Store-Conditional, depending on
+         STOREDATA.
 
-            If STOREDATA is NULL then this is a Load-Linked, meaning
-            that data is loaded from memory as normal, but a
-            'reservation' for the address is also lodged in the
-            hardware.
+         If STOREDATA is NULL then this is a Load-Linked, meaning
+         that data is loaded from memory as normal, but a
+         'reservation' for the address is also lodged in the
+         hardware.
 
-               result = Load-Linked(addr, end)
+            result = Load-Linked(addr, end)
 
-            The data transfer type is the type of RESULT (I32, I64,
-            etc).  ppIRStmt output:
+         The data transfer type is the type of RESULT (I32, I64,
+         etc).  ppIRStmt output:
 
-               result = LD<end>-Linked(<addr>), eg. LDbe-Linked(t1)
+            result = LD<end>-Linked(<addr>), eg. LDbe-Linked(t1:7)
 
-            If STOREDATA is not NULL then this is a Store-Conditional,
-            hence:
+         If STOREDATA is not NULL then this is a Store-Conditional,
+         hence:
 
-               result = Store-Conditional(addr, storedata, end)
+            result = Store-Conditional(addr, storedata, end)
 
-            The data transfer type is the type of STOREDATA and RESULT
-            has type Ity_I1. The store may fail or succeed depending
-            on the state of a previously lodged reservation on this
-            address.  RESULT is written 1 if the store succeeds and 0
-            if it fails.  eg ppIRStmt output:
+         The data transfer type is the type of STOREDATA and RESULT
+         has type Ity_I1. The store may fail or succeed depending
+         on the state of a previously lodged reservation on this
+         address.  RESULT is written 1 if the store succeeds and 0
+         if it fails.  eg ppIRStmt output:
 
-               result = ( ST<end>-Cond(<addr>) = <storedata> )
-               eg t3 = ( STbe-Cond(t1, t2) )
+            result = ( ST<end>-Cond(<addr>) = <storedata> )
+            eg t3 = ( STbe-Cond(t1:1, t1:2) )
 
-            In all cases, the address must be naturally aligned for
-            the transfer type -- any misaligned addresses should be
-            caught by a dominating IR check and side exit.  This
-            alignment restriction exists because on at least some
-            LL/SC platforms (ppc), stwcx. etc will trap w/ SIGBUS on
-            misaligned addresses, and we have to actually generate
-            stwcx. on the host, and we don't want it trapping on the
-            host.
+         In all cases, the address must be naturally aligned for
+         the transfer type -- any misaligned addresses should be
+         caught by a dominating IR check and side exit.  This
+         alignment restriction exists because on at least some
+         LL/SC platforms (ppc), stwcx. etc will trap w/ SIGBUS on
+         misaligned addresses, and we have to actually generate
+         stwcx. on the host, and we don't want it trapping on the
+         host.
 
-            Summary of rules for transfer type:
-              STOREDATA == NULL (LL):
-                transfer type = type of RESULT
-              STOREDATA != NULL (SC):
-                transfer type = type of STOREDATA, and RESULT :: Ity_I1
-         */
-         struct {
-            IREndness end;
-            IRTemp    result;
-            IRExpr*   addr;
-            IRExpr*   storedata; /* NULL => LL, non-NULL => SC */
-         } LLSC;
+         Summary of rules for transfer type:
+           STOREDATA == NULL (LL):
+             transfer type = type of RESULT
+           STOREDATA != NULL (SC):
+             transfer type = type of STOREDATA, and RESULT :: Ity_I1
+      */
+      struct {
+         IREndness end;
+         IRTemp    result;
+         IRExpr*   addr;
+         IRExpr*   storedata; /* NULL => LL, non-NULL => SC */
+      } LLSC;
 
-         /* Call (possibly conditionally) a C function that has side
-            effects (ie. is "dirty").  See the comments above the
-            IRDirty type declaration for more information.
+      /* Call (possibly conditionally) a C function that has side
+         effects (ie. is "dirty").  See the comments above the
+         IRDirty type declaration for more information.
 
-            ppIRStmt output:
-               t<tmp> = DIRTY <guard> <effects> 
-                  ::: <callee>(<args>)
-            eg.
-               t1 = DIRTY t27 RdFX-gst(16,4) RdFX-gst(60,4)
-                     ::: foo{0x380035f4}(t2)
-         */       
-         struct {
-            IRDirty* details;
-         } Dirty;
+         ppIRStmt output:
+            t<tmp> = DIRTY <guard> <effects> 
+               ::: <callee>(<args>)
+         eg.
+            t1 = DIRTY t27 RdFX-gst(16,4) RdFX-gst(60,4)
+                  ::: foo{0x380035f4}(t1:2)
+      */       
+      struct {
+         IRDirty* details;
+      } Dirty;
 
-         /* A memory bus event - a fence, or acquisition/release of the
-            hardware bus lock.  IR optimisation treats all these as fences
-            across which no memory references may be moved.
-            ppIRStmt output: MBusEvent-Fence,
-                             MBusEvent-BusLock, MBusEvent-BusUnlock.
-         */
-         struct {
-            IRMBusEvent event;
-         } MBE;
+      /* A memory bus event - a fence, or acquisition/release of the
+         hardware bus lock.  IR optimisation treats all these as fences
+         across which no memory references may be moved.
+         ppIRStmt output: MBusEvent-Fence,
+                       MBusEvent-BusLock, MBusEvent-BusUnlock.
+      */
+      struct {
+         IRMBusEvent event;
+      } MBE;
 
-         /* Conditional exit from the middle of an IRSB.
-            ppIRStmt output: if (<guard>) goto {<jk>} <dst>
-                         eg. if (t69) goto {Boring} 0x4000AAA:I32
-            If <guard> is true, the guest state is also updated by
-            PUT-ing <dst> at <offsIP>.  This is done because a
-            taken exit must update the guest program counter.
-         */
-         struct {
-            IRExpr*    guard;    /* Conditional expression */
-            IRConst*   dst;      /* Jump target (constant only) */
-            IRJumpKind jk;       /* Jump kind */
-            Int        offsIP;   /* Guest state offset for IP */
-         } Exit;
-      } Ist;
-   }
-   IRStmt;
+      /* Conditional exit from the middle of an IRSB.
+         ppIRStmt output: if (<guard>) goto {<jk>} <dst>
+                      eg. if (t0:69) goto {Boring} 0x4000AAA:I32
+         If <guard> is true, the guest state is also updated by
+         PUT-ing <dst> at <offsIP>.  This is done because a
+         taken exit must update the guest program counter.
+         TODO-JIT: The condition is going to disappear, making it
+         unconditional exit.
+      */
+      struct {
+         IRExpr*    guard;    /* Conditional expression */
+         IRConst*   dst;      /* Jump target (constant only) */
+         IRJumpKind jk;       /* Jump kind */
+         Int        offsIP;   /* Guest state offset for IP */
+      } Exit;
+
+      /* If-Then-Else control flow diamond. It contains:
+         - "then" and "else" legs with vectors of statements, together
+            with their associated type environments
+            At the moment, nested "if-then-else" statements are not supported.
+         - Phi nodes, which are used to merge temporaries from "then" and
+           "else" legs
+
+         A leg can either end with an unconditional exit or join the main
+         flow.
+
+         ppIRIfThenElse output:
+              if (<cond>) then { <IRStmtVec> } else { <IRStmtVec> }
+          eg. if (t0:3) then { <then-statements> } else { <else-statements> }
+      */
+      struct {
+         IRExpr*    cond;
+         IRStmtVec* then_leg;
+         IRStmtVec* else_leg;
+         IRPhiVec*  phi_nodes;
+      } IfThenElse;
+   } Ist;
+};
 
 /* Statement constructors. */
 extern IRStmt* IRStmt_NoOp    ( void );
@@ -2979,45 +3132,26 @@ extern IRStmt* IRStmt_Dirty   ( IRDirty* details );
 extern IRStmt* IRStmt_MBE     ( IRMBusEvent event );
 extern IRStmt* IRStmt_Exit    ( IRExpr* guard, IRJumpKind jk, IRConst* dst,
                                 Int offsIP );
+extern IRStmt* IRStmt_IfThenElse(IRExpr* cond, IRStmtVec* then_leg,
+                                 IRStmtVec* else_leg, IRPhiVec* phi_nodes);
 
-/* Deep-copy an IRStmt. */
-extern IRStmt* deepCopyIRStmt ( const IRStmt* );
+/* Deep-copy an IRStmt.
+   Parent is required for "if-then-else" statements. */
+extern IRStmt* deepCopyIRStmt(const IRStmt* src, IRStmtVec* parent);
 
 /* Pretty-print an IRStmt. */
 extern void ppIRStmt ( const IRStmt* );
 
+/* Adds a phi node to IfThenElse statement. */
+extern void addIRPhi(IRStmt* , IRPhi*);
 
 /* ------------------ Basic Blocks ------------------ */
-
-/* Type environments: a bunch of statements, expressions, etc, are
-   incomplete without an environment indicating the type of each
-   IRTemp.  So this provides one.  IR temporaries are really just
-   unsigned ints and so this provides an array, 0 .. n_types_used-1 of
-   them.
-*/
-typedef
-   struct {
-      IRType* types;
-      Int     types_size;
-      Int     types_used;
-   }
-   IRTypeEnv;
-
-/* Obtain a new IRTemp */
-extern IRTemp newIRTemp ( IRTypeEnv*, IRType );
-
-/* Deep-copy a type environment */
-extern IRTypeEnv* deepCopyIRTypeEnv ( const IRTypeEnv* );
-
-/* Pretty-print a type environment */
-extern void ppIRTypeEnv ( const IRTypeEnv* );
-
 
 /* Code blocks, which in proper compiler terminology are superblocks
    (single entry, multiple exit code sequences) contain:
 
-   - A table giving a type for each temp (the "type environment")
-   - An expandable array of statements
+   - A vector of statements, together with its type environment
+   - A sequence used to get a unique IRTyEnvID for nested IRStmtVec's
    - An expression of type 32 or 64 bits, depending on the
      guest's word size, indicating the next destination if the block 
      executes all the way to the end, without a side exit
@@ -3030,17 +3164,15 @@ extern void ppIRTypeEnv ( const IRTypeEnv* );
 */
 typedef
    struct {
-      IRTypeEnv* tyenv;
-      IRStmt**   stmts;
-      Int        stmts_size;
-      Int        stmts_used;
+      IRStmtVec* stmts;
+      IRTyEnvID  id_seq;
       IRExpr*    next;
       IRJumpKind jumpkind;
       Int        offsIP;
    }
    IRSB;
 
-/* Allocate a new, uninitialised IRSB */
+/* Allocates an empty IRSB. The corresponding type environment has ID #0. */
 extern IRSB* emptyIRSB ( void );
 
 /* Deep-copy an IRSB */
@@ -3053,16 +3185,22 @@ extern IRSB* deepCopyIRSBExceptStmts ( const IRSB* );
 /* Pretty-print an IRSB */
 extern void ppIRSB ( const IRSB* );
 
-/* Append an IRStmt to an IRSB */
-extern void addStmtToIRSB ( IRSB*, IRStmt* );
+/* Append an IRStmt to the main IRStmtVec (ID #0) of an IRSB.
+   Function addStmtToIRStmtVec() should be used instead. */
+extern void addStmtToIRSB ( IRSB*, IRStmt* ) __attribute__ ((deprecated));
 
+extern void addStmtToIRStmtVec(IRStmtVec*, IRStmt*);
+
+extern IRTyEnvID nextIRTyEnvID(IRSB*);
 
 /*---------------------------------------------------------------*/
 /*--- Helper functions for the IR                             ---*/
 /*---------------------------------------------------------------*/
 
-/* For messing with IR type environments */
-extern IRTypeEnv* emptyIRTypeEnv  ( void );
+/* Creates a new IR type environment with an invalid IRTyEnvID.
+   Consult nextIRTyEnvID() function for getting a valid IRTyEnvID.
+   Useful for messing with IR type environments. */
+extern IRTypeEnv *emptyIRTypeEnv(void);
 
 /* What is the type of this expression? */
 extern IRType typeOfIRConst ( const IRConst* );
@@ -3074,12 +3212,12 @@ extern void typeOfIRLoadGOp ( IRLoadGOp cvt,
                               /*OUT*/IRType* t_res,
                               /*OUT*/IRType* t_arg );
 
-/* Sanity check a BB of IR */
-extern void sanityCheckIRSB ( const  IRSB*  bb, 
-                              const  HChar* caller,
-                              Bool   require_flatness, 
-                              IRType guest_word_size );
-extern Bool isFlatIRStmt ( const IRStmt* );
+/* Sanity check a BB of IR. */
+extern void sanityCheckIRSB(const  IRSB* bb,
+                            const  HChar* caller,
+                            Bool   require_flatness,
+                            IRType guest_word_size);
+extern Bool isFlatIRSB(const IRSB*);
 
 /* Is this any value actually in the enumeration 'IRType' ? */
 extern Bool isPlausibleIRType ( IRType ty );
@@ -3089,7 +3227,7 @@ extern Bool isPlausibleIRType ( IRType ty );
 /*--- IR injection                                            ---*/
 /*---------------------------------------------------------------*/
 
-void vex_inject_ir(IRSB *, IREndness);
+void vex_inject_ir(IRSB* , IREndness);
 
 
 #endif /* ndef __LIBVEX_IR_H */

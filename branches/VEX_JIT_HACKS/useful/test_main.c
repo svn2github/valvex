@@ -165,7 +165,7 @@ int main ( int argc, char** argv )
       assert(orig_nbytes >= 1 && orig_nbytes <= N_ORIGBUF);
       for (i = 0; i < orig_nbytes; i++) {
          assert(1 == sscanf(&linebuf[2 + 3*i], "%x", &u));
-         origbuf[18+ i] = (UChar)u;
+         origbuf[i] = (UChar)u;
       }
 
       /* FIXME: put sensible values into the .hwcaps fields */
@@ -198,7 +198,7 @@ int main ( int argc, char** argv )
       /* ----- Set up args for LibVEX_Translate ----- */
 
       vta.abiinfo_both    = vbi;
-      vta.guest_bytes     = &origbuf[18];
+      vta.guest_bytes     = &origbuf[0];
       vta.guest_bytes_addr = orig_addr;
       vta.callback_opaque = NULL;
       vta.chase_into_ok   = chase_into_not_ok;
@@ -219,13 +219,13 @@ int main ( int argc, char** argv )
       vta.arch_host      = VexArchAMD64;
       vta.archinfo_host  = vai_amd64;
 #endif
-#if 0 /* x86 -> x86 */
+#if 1 /* x86 -> x86 */
       vta.arch_guest     = VexArchX86;
       vta.archinfo_guest = vai_x86;
       vta.arch_host      = VexArchX86;
       vta.archinfo_host  = vai_x86;
 #endif
-#if 1 /* x86 -> mips32 */
+#if 0 /* x86 -> mips32 */
       vta.arch_guest     = VexArchX86;
       vta.archinfo_guest = vai_x86;
       vta.arch_host      = VexArchMIPS32;

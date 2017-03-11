@@ -43,7 +43,7 @@
 #define binop(kind, a1, a2)  IRExpr_Binop(kind, a1, a2)
 #define triop(kind, a1, a2, a3)  IRExpr_Triop(kind, a1, a2, a3)
 #define qop(kind, a1, a2, a3, a4)  IRExpr_Qop(kind, a1, a2, a3, a4)
-#define stmt(irsb, st)  addStmtToIRSB(irsb, st)
+#define stmt(irsb, st)  addStmtToIRStmtVec(irsb->stmts, st)
 
 
 /* The IR Injection Control Block. vex_inject_ir will query its contents
@@ -125,13 +125,13 @@ load(IREndness endian, IRType type, HWord haddr)
 static void
 store_aux(IRSB *irsb, IREndness endian, IRExpr *addr, IRExpr *data)
 {
-   if (typeOfIRExpr(irsb->tyenv, data) == Ity_D64) {
+   if (typeOfIRExpr(irsb->stmts->tyenv, data) == Ity_D64) {
       /* The insn selectors do not support writing a DFP value to memory.
          So we need to fix it here by reinterpreting the DFP value as an
          integer and storing that. */
       data = unop(Iop_ReinterpD64asI64, data);
    }
-   if (typeOfIRExpr(irsb->tyenv, data) == Ity_I1) {
+   if (typeOfIRExpr(irsb->stmts->tyenv, data) == Ity_I1) {
       /* We cannot store a single bit. So we store it in a 32-bit container.
          See also load_aux. */
       data = unop(Iop_1Uto32, data);
@@ -158,7 +158,7 @@ store(IRSB *irsb, IREndness endian, HWord haddr, IRExpr *data)
       vpanic("invalid #bytes for address");
    }
 
-   IRType type = typeOfIRExpr(irsb->tyenv, data);
+   IRType type = typeOfIRExpr(irsb->stmts->tyenv, data);
 
    vassert(type == Ity_I1 || sizeofIRType(type) <= 16);
 
@@ -188,7 +188,7 @@ store(IRSB *irsb, IREndness endian, HWord haddr, IRExpr *data)
 
 
 /* Inject IR stmts depending on the data provided in the control
-   block iricb. */
+   block iricb. IR statements are injected into main IRStmtVec with ID #0. */
 void
 vex_inject_ir(IRSB *irsb, IREndness endian)
 {
@@ -310,11 +310,11 @@ vex_inject_ir(IRSB *irsb, IREndness endian)
    if (0) {
       vex_printf("BEGIN inject\n");
       if (iricb.t_result == Ity_I1 || sizeofIRType(iricb.t_result) <= 8) {
-         ppIRStmt(irsb->stmts[irsb->stmts_used - 1]);
+         ppIRStmt(irsb->stmts->stmts[irsb->stmts->stmts_used - 1]);
       } else if (sizeofIRType(iricb.t_result) == 16) {
-         ppIRStmt(irsb->stmts[irsb->stmts_used - 2]);
+         ppIRStmt(irsb->stmts->stmts[irsb->stmts->stmts_used - 2]);
          vex_printf("\n");
-         ppIRStmt(irsb->stmts[irsb->stmts_used - 1]);
+         ppIRStmt(irsb->stmts->stmts[irsb->stmts->stmts_used - 1]);
       }
       vex_printf("\nEND inject\n");
    }
