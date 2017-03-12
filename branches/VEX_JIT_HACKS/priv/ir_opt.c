@@ -538,6 +538,7 @@ static IRStmtVec* flatten_IRStmtVec(IRStmtVec* in, IRStmtVec* parent)
 static IRSB* flatten_BB ( IRSB* in )
 {
    IRSB* out     = emptyIRSB();
+   out->id_seq   = in->id_seq;
    out->stmts    = flatten_IRStmtVec(in->stmts, NULL);
    out->next     = flatten_Expr(out->stmts, in->next);
    out->jumpkind = in->jumpkind;
