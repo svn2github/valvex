@@ -3675,16 +3675,8 @@ void typeOfPrimop ( IROp op,
 /*--- Helper functions for the IR -- IR Phi Nodes             ---*/
 /*---------------------------------------------------------------*/
 
-void addIRPhi(IRStmt* st, IRPhi* phi)
+void addIRPhiToIRPhiVec(IRPhiVec* phi_nodes, IRPhi* phi)
 {
-   vassert(st->tag == Ist_IfThenElse);
-
-   IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
-   if (phi_nodes == NULL) {
-      phi_nodes = emptyIRPhiVec();
-      st->Ist.IfThenElse.phi_nodes = phi_nodes;
-   }
-
    if (phi_nodes->phis_used == phi_nodes->phis_size) {
       IRPhi** phis2 = LibVEX_Alloc_inline(2 * phi_nodes->phis_size * sizeof(IRPhi*));
       for (UInt i = 0; i < phi_nodes->phis_size; i++)

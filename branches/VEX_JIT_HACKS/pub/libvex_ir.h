@@ -2760,11 +2760,13 @@ typedef
    IRPhiVec;
 
 extern void ppIRPhi(const IRPhi*);
-extern IRPhi* mkIRPhi(IRTemp, IRTemp, IRTemp);
+extern IRPhi* mkIRPhi(IRTemp dst, IRTemp srcThen, IRTemp srcElse);
 extern IRPhi* deepCopyIRPhi(const IRPhi*);
 extern void ppIRPhiVec(const IRPhiVec*);
 extern IRPhiVec* emptyIRPhiVec(void);
 extern IRPhiVec* deepCopyIRPhiVec(const IRPhiVec*);
+
+extern void addIRPhiToIRPhiVec(IRPhiVec* , IRPhi*);
 
 
 /* ------------------ Type Environments ------------------ */
@@ -3150,9 +3152,6 @@ extern IRStmt* deepCopyIRStmt(const IRStmt* src, IRStmtVec* parent);
 
 /* Pretty-print an IRStmt. */
 extern void ppIRStmt ( const IRStmt* );
-
-/* Adds a phi node to IfThenElse statement. */
-extern void addIRPhi(IRStmt* , IRPhi*);
 
 /* ------------------ Basic Blocks ------------------ */
 
