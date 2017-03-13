@@ -4006,6 +4006,11 @@ Bool isFlatIRStmtVec(const IRStmtVec* stmts)
    return True;
 }
 
+Bool isFlatIRSB(const IRSB* irsb)
+{
+   return isFlatIRStmtVec(irsb->stmts);
+}
+
 /*---------------------------------------------------------------*/
 /*--- Sanity checking                                         ---*/
 /*---------------------------------------------------------------*/
@@ -4137,7 +4142,7 @@ void assignedOnce_Temp(const IRSB* bb, const IRStmtVec* stmts,
 
    def_counts[tmp.id][tmp.index]++;
    if (def_counts[tmp.id][tmp.index] > 1) {
-      sanityCheckFail(bb,stmt,err_msg_assigned_more_than_once);
+      sanityCheckFail(bb, stmt, err_msg_assigned_more_than_once);
    }
 }
 
@@ -4236,9 +4241,6 @@ void useBeforeDef_PhiNodes(const IRSB* bb, const IRStmtVec* stmts,
    }
 }
 
-static void useBeforeDef_Stmts(const IRSB* bb, const IRStmtVec* stmts,
-                               UInt* def_counts[]);
-
 static
 void useBeforeDef_Stmt(const IRSB* bb, const IRStmtVec* stmts,
                        const IRStmt* stmt, UInt* def_counts[])
@@ -4322,8 +4324,7 @@ void useBeforeDef_Stmt(const IRSB* bb, const IRStmtVec* stmts,
       case Ist_IfThenElse:
          useBeforeDef_Expr(bb, stmts, stmt, stmt->Ist.IfThenElse.cond,
                            def_counts);
-         useBeforeDef_Stmts(bb, stmt->Ist.IfThenElse.then_leg, def_counts);
-         useBeforeDef_Stmts(bb, stmt->Ist.IfThenElse.else_leg, def_counts);
+         /* Traversing into legs driven from sanityCheckIRStmtVec(). */
          if (stmt->Ist.IfThenElse.phi_nodes != NULL) {
             useBeforeDef_PhiNodes(bb, stmts, stmt,
                                   stmt->Ist.IfThenElse.phi_nodes, def_counts);
@@ -4333,18 +4334,6 @@ void useBeforeDef_Stmt(const IRSB* bb, const IRStmtVec* stmts,
          vpanic("useBeforeDef_Stmt");
    }
 }
-
-static
-void useBeforeDef_Stmts(const IRSB* bb, const IRStmtVec* stmts,
-                        UInt* def_counts[])
-{
-   for (UInt i = 0; i < stmts->stmts_used; i++) {
-      useBeforeDef_Stmt(bb, stmts, stmts->stmts[i], def_counts);
-   }
-}
-
-static void assignedOnce_Stmts(const IRSB* bb, const IRStmtVec* stmts,
-                               UInt* def_counts[]);
 
 static
 void assignedOnce_Stmt(const IRSB* bb, const IRStmtVec* stmts,
@@ -4396,8 +4385,7 @@ void assignedOnce_Stmt(const IRSB* bb, const IRStmtVec* stmts,
          "IRStmt.LLSC: destination tmp is assigned more than once");
       break;
    case Ist_IfThenElse: {
-      assignedOnce_Stmts(bb, stmt->Ist.IfThenElse.then_leg, def_counts);
-      assignedOnce_Stmts(bb, stmt->Ist.IfThenElse.else_leg, def_counts);
+      /* Traversing into legs driven from sanityCheckIRStmtVec(). */
       const IRPhiVec* phi_nodes = stmt->Ist.IfThenElse.phi_nodes;
       if (phi_nodes != NULL) {
          for (UInt i = 0; i < phi_nodes->phis_used; i++) {
@@ -4416,15 +4404,6 @@ void assignedOnce_Stmt(const IRSB* bb, const IRStmtVec* stmts,
       break;
    default:
       vassert(0);
-   }
-}
-
-static
-void assignedOnce_Stmts(const IRSB* bb, const IRStmtVec* stmts,
-                        UInt* def_counts[])
-{
-   for (UInt i = 0; i < stmts->stmts_used; i++) {
-      assignedOnce_Stmt(bb, stmts, stmts->stmts[i], def_counts);
    }
 }
 
@@ -4651,9 +4630,6 @@ void tcPhi(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
                                 "tmp do not match");
    }
 }
-
-static void tcStmts(const IRSB* bb, const IRStmtVec* stmts, Bool require_flat,
-                    IRType gWordTy);
 
 static
 void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
@@ -4940,8 +4916,7 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
          tcExpr(bb, stmts, stmt, stmt->Ist.IfThenElse.cond, gWordTy);
          if (typeOfIRExpr(tyenv, stmt->Ist.IfThenElse.cond) != Ity_I1)
             sanityCheckFail(bb,stmt,"IRStmt.IfThenElse.cond: not :: Ity_I1");
-         tcStmts(bb, stmt->Ist.IfThenElse.then_leg, require_flat, gWordTy);
-         tcStmts(bb, stmt->Ist.IfThenElse.else_leg, require_flat, gWordTy);
+         /* Traversing into legs driven from sanityCheckIRStmtVec(). */
          const IRPhiVec* phi_nodes = stmt->Ist.IfThenElse.phi_nodes;
          if (phi_nodes != NULL) {
             for (UInt i = 0; i < phi_nodes->phis_used; i++) {
@@ -4955,18 +4930,10 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
 }
 
 static
-void tcStmts(const IRSB* bb, const IRStmtVec* stmts, Bool require_flat,
-             IRType gWordTy)
-{
-   for (UInt i = 0; i < stmts->stmts_used; i++) {
-      tcStmt(bb, stmts, stmts->stmts[i], require_flat, gWordTy);
-   }
-}
-
-static
 void sanityCheckIRStmtVec(const IRSB* bb, const IRStmtVec* stmts,
                           Bool require_flat, UInt* def_counts[],
-                          UInt n_stmt_vecs, UInt id_counts[])
+                          UInt n_stmt_vecs, UInt id_counts[],
+                          IRType gWordTy)
 {
    const IRTypeEnv* tyenv = stmts->tyenv;
    IRTyEnvID id = tyenv->id;
@@ -5009,20 +4976,29 @@ void sanityCheckIRStmtVec(const IRSB* bb, const IRStmtVec* stmts,
       }
    }
 
-   /* Check for flatness, if required. */
-   if (require_flat) {
-      for (UInt i = 0; i < stmts->stmts_used; i++) {
-         const IRStmt *stmt = stmts->stmts[i];
-         if (stmt == NULL)
-            sanityCheckFail(bb,stmt,"IRStmt: is NULL");
-         if (!isFlatIRStmt(stmt))
-            sanityCheckFail(bb,stmt,"IRStmt: is not flat");
-         if (stmt->tag == Ist_IfThenElse) {
-            sanityCheckIRStmtVec(bb, stmt->Ist.IfThenElse.then_leg,
-                              require_flat, def_counts, n_stmt_vecs, id_counts);
-            sanityCheckIRStmtVec(bb, stmt->Ist.IfThenElse.else_leg,
-                              require_flat, def_counts, n_stmt_vecs, id_counts);
+   for (UInt i = 0; i < stmts->stmts_used; i++) {
+      const IRStmt *stmt = stmts->stmts[i];
+      if (stmt == NULL)
+         sanityCheckFail(bb, stmt, "IRStmt: is NULL");
+
+      /* Check for flatness, if required. */
+      if (require_flat) {
+         if (!isFlatIRStmt(stmt)) {
+            sanityCheckFail(bb, stmt, "IRStmt: is not flat");
          }
+      }
+
+      /* Count the defs of each temp.  Only one def is allowed.
+         Also, check that each used temp has already been defd. */
+      useBeforeDef_Stmt(bb, stmts, stmt, def_counts);
+      assignedOnce_Stmt(bb, stmts, stmt, def_counts);
+      tcStmt(bb, stmts, stmt, require_flat, gWordTy);
+
+      if (stmt->tag == Ist_IfThenElse) {
+         sanityCheckIRStmtVec(bb, stmt->Ist.IfThenElse.then_leg, require_flat,
+                              def_counts, n_stmt_vecs, id_counts, gWordTy);
+         sanityCheckIRStmtVec(bb, stmt->Ist.IfThenElse.else_leg, require_flat,
+                              def_counts, n_stmt_vecs, id_counts, gWordTy);
       }
    }
 }
@@ -5047,13 +5023,7 @@ void sanityCheckIRSB(const IRSB* bb, const  HChar* caller, Bool require_flat,
    vassert(gWordTy == Ity_I32 || gWordTy == Ity_I64);
 
    sanityCheckIRStmtVec(bb, bb->stmts, require_flat, def_counts, n_stmt_vecs,
-                        id_counts);
-
-   /* Count the defs of each temp.  Only one def is allowed.
-      Also, check that each used temp has already been defd. */
-   useBeforeDef_Stmts(bb, bb->stmts, def_counts);
-   assignedOnce_Stmts(bb, bb->stmts, def_counts);
-   tcStmts(bb, bb->stmts, require_flat, gWordTy);
+                        id_counts, gWordTy);
 
    if (require_flat) {
       if (!isIRAtom(bb->next)) {
