@@ -3102,11 +3102,13 @@ struct _IRStmt {
       } Exit;
 
       /* If-Then-Else control flow diamond. It contains:
+         - Guard controling whether "then" or "else" leg is taken
          - "then" and "else" legs with vectors of statements, together
             with their associated type environments
             At the moment, nested "if-then-else" statements are not supported.
          - Phi nodes, which are used to merge temporaries from "then" and
            "else" legs
+         - TODO-JIT: A hint which leg is more likely to be taken (hot path)
 
          A leg can either end with an unconditional exit or join the main
          flow.

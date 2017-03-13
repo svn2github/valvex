@@ -916,7 +916,7 @@ static void redundant_put_removal_IRStmtVec(
                HashHW* env)
 {
    /* And now scan backwards through the statements. */
-   for (UInt i = stmts->stmts_used - 1; i >= 0; i--) {
+   for (Int i = stmts->stmts_used - 1; i >= 0; i--) {
       IRStmt* st = stmts->stmts[i];
       Bool    isPut;
       UInt    key;
@@ -3226,7 +3226,7 @@ static void do_deadcode_IRStmtVec(Bool* set, IRStmtVec* stmts,
    *i_unconditional_exit = -1;
 
    /* Work backwards through the stmts */
-   for (UInt i = stmts->stmts_used - 1; i >= 0; i--) {
+   for (Int i = stmts->stmts_used - 1; i >= 0; i--) {
       IRStmt* st = stmts->stmts[i];
       if (st->tag == Ist_NoOp)
          continue;
@@ -3301,7 +3301,7 @@ static void spec_helpers_IRStmtVec(
 {
    IRExpr* ex;
 
-   for (UInt i = stmts->stmts_used - 1; i >= 0; i--) {
+   for (Int i = stmts->stmts_used - 1; i >= 0; i--) {
       IRStmt* st = stmts->stmts[i];
 
       if (st->tag == Ist_IfThenElse) {
@@ -3790,7 +3790,7 @@ static IRTemp subst_AvailExpr_Temp ( HashHW* env, IRTemp tmp )
 {
    HWord res;
    /* env :: IRTemp -> IRTemp */
-   if (lookupHHW(env, &res, (HWord)tmp.index)) {
+   if (lookupHHW(env, &res, (HWord) tmp.index)) {
       return mkIRTemp(tmp.id, res);
    } else {
       return tmp;
@@ -4005,7 +4005,6 @@ static AvailExpr* irExpr_to_AvailExpr ( IRExpr* e, Bool allowLoadsToBeCSEd )
 static Bool do_cse_IRStmtVec(IRStmtVec* stmts, Bool allowLoadsToBeCSEd)
 {
    Int        j, paranoia;
-   IRTemp     t, q;
    AvailExpr* eprime;
    AvailExpr* ae;
    Bool       invalidate;
@@ -4059,7 +4058,7 @@ static Bool do_cse_IRStmtVec(IRStmtVec* stmts, Bool allowLoadsToBeCSEd)
                                         allowLoadsToBeCSEd);
             paranoia = 0; break;
          default: 
-            vpanic("do_cse_BB(1)");
+            vpanic("do_cse_IRStmtVec(1)");
       }
 
       if (paranoia > 0) {
@@ -4105,7 +4104,7 @@ static Bool do_cse_IRStmtVec(IRStmtVec* stmts, Bool allowLoadsToBeCSEd)
                      invalidate = True;
                }
                else 
-                  vpanic("do_cse_BB(2)");
+                  vpanic("do_cse_IRStmtVec(2)");
             }
 
             if (invalidate) {
@@ -4121,7 +4120,7 @@ static Bool do_cse_IRStmtVec(IRStmtVec* stmts, Bool allowLoadsToBeCSEd)
       if (st->tag != Ist_WrTmp)
          continue;
 
-      t = st->Ist.WrTmp.tmp;
+      IRTemp t = st->Ist.WrTmp.tmp;
       eprime = irExpr_to_AvailExpr(st->Ist.WrTmp.data, allowLoadsToBeCSEd);
       /* ignore if not of AvailExpr form */
       if (!eprime)
@@ -4141,7 +4140,7 @@ static Bool do_cse_IRStmtVec(IRStmtVec* stmts, Bool allowLoadsToBeCSEd)
          /* A binding E' -> q was found.  Replace stmt by "t = q" and
             note the t->q binding in tenv. */
          /* (this is the core of the CSE action) */
-         q.index = (IRTyEnvIndex) aenv->val[j];
+         IRTemp q = mkIRTemp(stmts->tyenv->id, (IRTyEnvIndex) aenv->val[j]);
          stmts->stmts[i] = IRStmt_WrTmp(t, IRExpr_RdTmp(q));
          addToHHW(tenv, (HWord) t.index, (HWord) q.index);
          anyDone = True;
@@ -4258,7 +4257,7 @@ static void collapse_AddSub_chains_IRStmtVec(IRStmtVec* stmts)
    IRTemp var, var2;
    Int    con, con2;
 
-   for (UInt i = stmts->stmts_used - 1; i >= 0; i--) {
+   for (Int i = stmts->stmts_used - 1; i >= 0; i--) {
       IRStmt* st = stmts->stmts[i];
       if (st->tag == Ist_NoOp)
          continue;
@@ -4386,7 +4385,7 @@ IRExpr* findPutI(IRStmtVec* stmts, Int startHere,
    /* Scan backwards in bb from startHere to find a suitable PutI
       binding for (descrG, ixG, biasG), if any. */
 
-   for (UInt j = startHere; j >= 0; j--) {
+   for (Int j = startHere; j >= 0; j--) {
       IRStmt* st = stmts->stmts[j];
       if (st->tag == Ist_NoOp) 
          continue;
@@ -4598,7 +4597,7 @@ Bool guestAccessWhichMightOverlapPutI (
 static
 void do_redundant_GetI_elimination(IRStmtVec* stmts)
 {
-   for (UInt i = stmts->stmts_used - 1; i >= 0; i--) {
+   for (Int i = stmts->stmts_used - 1; i >= 0; i--) {
       IRStmt* st = stmts->stmts[i];
       if (st->tag == Ist_NoOp)
          continue;
