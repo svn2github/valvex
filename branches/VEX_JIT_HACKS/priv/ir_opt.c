@@ -6151,6 +6151,54 @@ static Interval stmt_modifies_guest_state (
 
 
 /*---------------------------------------------------------------*/
+/*--- The phi nodes deconstruction                            ---*/
+/*---------------------------------------------------------------*/
+
+/* This isn't part of IR optimisation however this pass is needed before IRSB
+   is handed to instruction selection phase. Deconstructs all phi nodes.
+   Consider this example:
+      t0:2 = phi(t1:0,t2:1)
+   which gets trivially deconstructed into statements appended to:
+      - then leg:
+         t0:2 = t1:0
+      - else leg:
+         t0:2 = t2:1
+
+   Such an IRSB no longer holds SSA property after this pass but subsequent
+   phases do no require it. */
+static void deconstruct_phi_nodes_IRStmtVec(IRStmtVec* stmts)
+{
+   for (UInt i = 0; i < stmts->stmts_used; i++) {
+      IRStmt* st = stmts->stmts[i];
+      if (st->tag != Ist_IfThenElse) {
+         continue;
+      }
+
+      IRStmtVec* then_leg = st->Ist.IfThenElse.then_leg;
+      IRStmtVec* else_leg = st->Ist.IfThenElse.else_leg;
+      IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
+      if (phi_nodes != NULL) {
+         for (UInt j = 0; j < phi_nodes->phis_used; j++) {
+            IRPhi* phi = phi_nodes->phis[j];
+            addStmtToIRStmtVec(then_leg, IRStmt_WrTmp(phi->dst,
+                                               IRExpr_RdTmp(phi->srcThen)));
+            addStmtToIRStmtVec(else_leg, IRStmt_WrTmp(phi->dst,
+                                               IRExpr_RdTmp(phi->srcElse)));
+         }
+      }
+
+      deconstruct_phi_nodes_IRStmtVec(then_leg);
+      deconstruct_phi_nodes_IRStmtVec(else_leg);
+   }
+}
+
+void deconstruct_phi_nodes(IRSB *irsb)
+{
+   deconstruct_phi_nodes_IRStmtVec(irsb->stmts);
+}
+
+
+/*---------------------------------------------------------------*/
 /*--- MSVC specific transformation hacks                      ---*/
 /*---------------------------------------------------------------*/
 

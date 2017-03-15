@@ -1009,6 +1009,14 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
    }
    /* end HACK */
 
+   if (irsb->id_seq > 1) {
+      /* We have some IfThenElse statements. Deconstruct phi nodes. */
+      deconstruct_phi_nodes(irsb);
+   }
+
+   /* Now the IRSB no longer holds SSA. However there is no need to because
+      instruction selection pass does not rely on SSA property. */
+
    if (vex_traceflags & VEX_TRACE_VCODE)
       vex_printf("\n------------------------" 
                    " Instruction selection "

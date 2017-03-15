@@ -3678,7 +3678,8 @@ void typeOfPrimop ( IROp op,
 void addIRPhiToIRPhiVec(IRPhiVec* phi_nodes, IRPhi* phi)
 {
    if (phi_nodes->phis_used == phi_nodes->phis_size) {
-      IRPhi** phis2 = LibVEX_Alloc_inline(2 * phi_nodes->phis_size * sizeof(IRPhi*));
+      IRPhi** phis2
+         = LibVEX_Alloc_inline(2 * phi_nodes->phis_size * sizeof(IRPhi*));
       for (UInt i = 0; i < phi_nodes->phis_size; i++)
          phis2[i] = phi_nodes->phis[i];
       phi_nodes->phis = phis2;
@@ -3698,7 +3699,8 @@ void addIRPhiToIRPhiVec(IRPhiVec* phi_nodes, IRPhi* phi)
 void addStmtToIRStmtVec(IRStmtVec* stmts, IRStmt* st)
 {
    if (stmts->stmts_used == stmts->stmts_size) {
-      IRStmt** stmts2 = LibVEX_Alloc_inline(2 * stmts->stmts_size * sizeof(IRStmt*));
+      IRStmt** stmts2
+         = LibVEX_Alloc_inline(2 * stmts->stmts_size * sizeof(IRStmt*));
       for (UInt i = 0; i < stmts->stmts_size; i++)
          stmts2[i] = stmts->stmts[i];
       stmts->stmts = stmts2;
