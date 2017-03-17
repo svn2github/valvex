@@ -609,13 +609,13 @@ typedef
    so far exists, allocate one.  */
 static IRTemp findShadowTmp ( MCEnv* mce, IRTemp orig )
 {
-   tl_assert(orig < mce->n_originalTmps);
-   if (mce->tmpMap[orig] == IRTemp_INVALID) {
-      mce->tmpMap[orig] 
-         = newIRTemp(mce->bb->tyenv, 
-                     shadowType(mce->bb->tyenv->types[orig]));
+   tl_assert(orig.index < mce->n_originalTmps);
+   if (isIRTempInvalid(mce->tmpMap[orig.index])) {
+      mce->tmpMap[orig.index] 
+         = newIRTemp(mce->bb->stmts->tyenv, 
+                     shadowType(mce->bb->stmts->tyenv->types[orig.index]));
    }
-   return mce->tmpMap[orig];
+   return mce->tmpMap[orig.index];
 }
 
 /* Allocate a new shadow for the given original tmp.  This means any
@@ -626,10 +626,10 @@ static IRTemp findShadowTmp ( MCEnv* mce, IRTemp orig )
    and use that instead. */
 static void newShadowTmp ( MCEnv* mce, IRTemp orig )
 {
-   tl_assert(orig < mce->n_originalTmps);
-   mce->tmpMap[orig] 
-      = newIRTemp(mce->bb->tyenv, 
-                  shadowType(mce->bb->tyenv->types[orig]));
+   tl_assert(orig.index < mce->n_originalTmps);
+   mce->tmpMap[orig.index] 
+      = newIRTemp(mce->bb->stmts->tyenv, 
+                  shadowType(mce->bb->stmts->tyenv->types[orig.index]));
 }
 
 
@@ -652,7 +652,7 @@ static Bool isOriginalAtom ( MCEnv* mce, IRAtom* a1 )
 {
    if (a1->tag == Iex_Const)
       return True;
-   if (a1->tag == Iex_RdTmp && a1->Iex.RdTmp.tmp < mce->n_originalTmps)
+   if (a1->tag == Iex_RdTmp && a1->Iex.RdTmp.tmp.index < mce->n_originalTmps)
       return True;
    return False;
 }
@@ -663,7 +663,7 @@ static Bool isShadowAtom ( MCEnv* mce, IRAtom* a1 )
 {
    if (a1->tag == Iex_Const)
       return True;
-   if (a1->tag == Iex_RdTmp && a1->Iex.RdTmp.tmp >= mce->n_originalTmps)
+   if (a1->tag == Iex_RdTmp && a1->Iex.RdTmp.tmp.index >= mce->n_originalTmps)
       return True;
    return False;
 }
@@ -725,12 +725,12 @@ static IRExpr* definedOfType ( IRType ty ) {
 /*------------------------------------------------------------*/
 
 /* assign value to tmp */
-#define assign(_bb,_tmp,_expr)   \
-   addStmtToIRSB((_bb), IRStmt_WrTmp((_tmp),(_expr)))
+#define assign(_stmts,_tmp,_expr)   \
+   addStmtToIRStmtVec((_stmts), IRStmt_WrTmp((_tmp),(_expr)))
 
 /* add stmt to a bb */
-#define stmt(_bb,_stmt)    \
-   addStmtToIRSB((_bb), (_stmt))
+#define stmt(_stmts,_stmt)    \
+   addStmtToIRStmtVec((_stmts), (_stmt))
 
 /* build various kinds of expressions */
 #define binop(_op, _arg1, _arg2) IRExpr_Binop((_op),(_arg1),(_arg2))
@@ -746,8 +746,8 @@ static IRExpr* definedOfType ( IRType ty ) {
    temporary.  This effectively converts an arbitrary expression into
    an atom. */
 static IRAtom* assignNew ( MCEnv* mce, IRType ty, IRExpr* e ) {
-   IRTemp t = newIRTemp(mce->bb->tyenv, ty);
-   assign(mce->bb, t, e);
+   IRTemp t = newIRTemp(mce->bb->stmts->tyenv, ty);
+   assign(mce->bb->stmts, t, e);
    return mkexpr(t);
 }
 
@@ -982,7 +982,7 @@ static IRAtom* mkPCastTo( MCEnv* mce, IRType dst_ty, IRAtom* vbits )
    /* Note, dst_ty is a shadow type, not an original type. */
    /* First of all, collapse vbits down to a single bit. */
    tl_assert(isShadowAtom(mce,vbits));
-   ty   = typeOfIRExpr(mce->bb->tyenv, vbits);
+   ty   = typeOfIRExpr(mce->bb->stmts->tyenv, vbits);
    tmp1 = NULL;
    switch (ty) {
       case Ity_I1:
@@ -1074,7 +1074,7 @@ static void complainIfUndefined ( MCEnv* mce, IRAtom* atom )
    tl_assert(isShadowAtom(mce, vatom));
    tl_assert(sameKindedAtoms(atom, vatom));
 
-   ty = typeOfIRExpr(mce->bb->tyenv, vatom);
+   ty = typeOfIRExpr(mce->bb->stmts->tyenv, vatom);
 
    /* sz is only used for constructing the error message */
    sz = ty==Ity_I1 ? 0 : sizeofIRType(ty);
@@ -1114,7 +1114,7 @@ static void complainIfUndefined ( MCEnv* mce, IRAtom* atom )
    }
    di->guard = cond;
    setHelperAnns( mce, di );
-   stmt( mce->bb, IRStmt_Dirty(di));
+   stmt( mce->bb->stmts, IRStmt_Dirty(di));
 
    /* Set the shadow tmp to be defined.  First, update the
       orig->shadow tmp mapping to reflect the fact that this shadow is
@@ -1124,8 +1124,8 @@ static void complainIfUndefined ( MCEnv* mce, IRAtom* atom )
    if (vatom->tag == Iex_RdTmp) {
       tl_assert(atom->tag == Iex_RdTmp);
       newShadowTmp(mce, atom->Iex.RdTmp.tmp);
-      assign(mce->bb, findShadowTmp(mce, atom->Iex.RdTmp.tmp), 
-                      definedOfType(ty));
+      assign(mce->bb->stmts, findShadowTmp(mce, atom->Iex.RdTmp.tmp), 
+                             definedOfType(ty));
    }
 }
 
@@ -1184,7 +1184,7 @@ void do_shadow_PUT ( MCEnv* mce,  Int offset,
       tl_assert(isShadowAtom(mce, vatom));
    }
 
-   ty = typeOfIRExpr(mce->bb->tyenv, vatom);
+   ty = typeOfIRExpr(mce->bb->stmts->tyenv, vatom);
    tl_assert(ty != Ity_I1);
    if (isAlwaysDefd(mce, offset, sizeofIRType(ty))) {
       /* later: no ... */
@@ -1192,7 +1192,7 @@ void do_shadow_PUT ( MCEnv* mce,  Int offset,
       /* complainIfUndefined(mce, atom); */
    } else {
       /* Do a plain shadow Put. */
-      stmt( mce->bb, IRStmt_Put( offset + mce->layout->total_sizeB, vatom ) );
+      stmt(mce->bb->stmts, IRStmt_Put(offset + mce->layout->total_sizeB, vatom));
    }
 }
 
@@ -1227,7 +1227,7 @@ void do_shadow_PUTI ( MCEnv* mce,
       IRRegArray* new_descr 
          = mkIRRegArray( descr->base + mce->layout->total_sizeB, 
                       tyS, descr->nElems);
-      stmt( mce->bb, IRStmt_PutI( mkIRPutI( new_descr, ix, bias, vatom ) ));
+      stmt(mce->bb->stmts, IRStmt_PutI(mkIRPutI(new_descr, ix, bias, vatom)));
    }
 }
 
@@ -2096,12 +2096,12 @@ IRAtom* expr2vbits_LDle_WRK ( MCEnv* mce, IRType ty, IRAtom* addr, UInt bias )
 
    /* We need to have a place to park the V bits we're just about to
       read. */
-   datavbits = newIRTemp(mce->bb->tyenv, ty);
+   datavbits = newIRTemp(mce->bb->stmts->tyenv, ty);
    di = unsafeIRDirty_1_N( datavbits, 
                            1/*regparms*/, hname, helper, 
                            mkIRExprVec_1( addrAct ));
    setHelperAnns( mce, di );
-   stmt( mce->bb, IRStmt_Dirty(di) );
+   stmt(mce->bb->stmts, IRStmt_Dirty(di));
 
    return mkexpr(datavbits);
 }
@@ -2147,7 +2147,7 @@ IRAtom* expr2vbits_ITE ( MCEnv* mce,
    vbitsC = expr2vbits(mce, cond);
    vbits0 = expr2vbits(mce, iffalse);
    vbits1 = expr2vbits(mce, iftrue);
-   ty = typeOfIRExpr(mce->bb->tyenv, vbits0);
+   ty = typeOfIRExpr(mce->bb->stmts->tyenv, vbits0);
 
    return
       mkUifU(mce, ty, assignNew(mce, ty, IRExpr_ITE(cond, vbits1, vbits0)),
@@ -2172,7 +2172,7 @@ IRExpr* expr2vbits ( MCEnv* mce, IRExpr* e )
          return IRExpr_RdTmp( findShadowTmp(mce, e->Iex.RdTmp.tmp) );
 
       case Iex_Const:
-         return definedOfType(shadowType(typeOfIRExpr(mce->bb->tyenv, e)));
+         return definedOfType(shadowType(typeOfIRExpr(mce->bb->stmts->tyenv, e)));
 
       case Iex_Binop:
          return expr2vbits_Binop(
@@ -2219,7 +2219,7 @@ IRExpr* zwidenToHostWord ( MCEnv* mce, IRAtom* vatom )
    /* vatom is vbits-value and as such can only have a shadow type. */
    tl_assert(isShadowAtom(mce,vatom));
 
-   ty  = typeOfIRExpr(mce->bb->tyenv, vatom);
+   ty  = typeOfIRExpr(mce->bb->stmts->tyenv, vatom);
    tyH = mce->hWordTy;
 
    if (tyH == Ity_I32) {
@@ -2277,7 +2277,7 @@ void do_shadow_STle ( MCEnv* mce,
    tl_assert(isOriginalAtom(mce,addr));
    tl_assert(isShadowAtom(mce,vdata));
 
-   ty = typeOfIRExpr(mce->bb->tyenv, vdata);
+   ty = typeOfIRExpr(mce->bb->stmts->tyenv, vdata);
 
    /* First, emit a definedness test for the address.  This also sets
       the address (shadow) to 'defined' following the test. */
@@ -2322,8 +2322,8 @@ void do_shadow_STle ( MCEnv* mce,
 
       setHelperAnns( mce, diLo64 );
       setHelperAnns( mce, diHi64 );
-      stmt( mce->bb, IRStmt_Dirty(diLo64) );
-      stmt( mce->bb, IRStmt_Dirty(diHi64) );
+      stmt(mce->bb->stmts, IRStmt_Dirty(diLo64));
+      stmt(mce->bb->stmts, IRStmt_Dirty(diHi64));
 
    } else {
 
@@ -2350,7 +2350,7 @@ void do_shadow_STle ( MCEnv* mce,
                                 zwidenToHostWord( mce, vdata )));
       }
       setHelperAnns( mce, di );
-      stmt( mce->bb, IRStmt_Dirty(di) );
+      stmt(mce->bb->stmts, IRStmt_Dirty(di));
    }
 
 }
@@ -2443,7 +2443,7 @@ void do_shadow_Dirty ( MCEnv* mce, IRDirty* d )
       tl_assert(d->mAddr);
       complainIfUndefined(mce, d->mAddr);
 
-      tyAddr = typeOfIRExpr(mce->bb->tyenv, d->mAddr);
+      tyAddr = typeOfIRExpr(mce->bb->stmts->tyenv, d->mAddr);
       tl_assert(tyAddr == Ity_I32 || tyAddr == Ity_I64);
       tl_assert(tyAddr == mce->hWordTy); /* not really right */
    }
@@ -2480,10 +2480,10 @@ void do_shadow_Dirty ( MCEnv* mce, IRDirty* d )
       results to all destinations. */
 
    /* Outputs: the destination temporary, if there is one. */
-   if (d->tmp != IRTemp_INVALID) {
+   if (!isIRTempInvalid(d->tmp)) {
       dst   = findShadowTmp(mce, d->tmp);
-      tyDst = typeOfIRTemp(mce->bb->tyenv, d->tmp);
-      assign( mce->bb, dst, mkPCastTo( mce, tyDst, curr) );
+      tyDst = typeOfIRTemp(mce->bb->stmts->tyenv, d->tmp);
+      assign(mce->bb->stmts, dst, mkPCastTo(mce, tyDst, curr));
    }
 
    /* Outputs: guest state that we write or modify. */
@@ -2619,33 +2619,33 @@ IRSB* mc_instrument ( void* closureV,
 
    /* Bool hasBogusLiterals = False; */
 
-   Int i, j, first_stmt;
-   IRStmt* st;
+   Int first_stmt;
    MCEnv mce;
 
    /* Set up BB */
-   IRSB* bb     = emptyIRSB();
-   bb->tyenv    = deepCopyIRTypeEnv(bb_in->tyenv);
-   bb->next     = deepCopyIRExpr(bb_in->next);
-   bb->jumpkind = bb_in->jumpkind;
+   IRSB* bb         = emptyIRSB();
+   bb->id_seq       = bb_in->id_seq;
+   bb->stmts->tyenv = deepCopyIRTypeEnv(bb_in->stmts->tyenv);
+   bb->next         = deepCopyIRExpr(bb_in->next);
+   bb->jumpkind     = bb_in->jumpkind;
 
    /* Set up the running environment.  Only .bb is modified as we go
       along. */
    mce.bb             = bb;
    mce.layout         = layout;
-   mce.n_originalTmps = bb->tyenv->types_used;
+   mce.n_originalTmps = bb->stmts->tyenv->types_used;
    mce.hWordTy        = hWordTy;
    mce.tmpMap         = LibVEX_Alloc(mce.n_originalTmps * sizeof(IRTemp));
-   for (i = 0; i < mce.n_originalTmps; i++)
-      mce.tmpMap[i] = IRTemp_INVALID;
+   for (UInt i = 0; i < mce.n_originalTmps; i++)
+      mce.tmpMap[i] = IRTemp_INVALID();
+
+   tl_assert(isFlatIRSB(bb_in));
 
    /* Iterate over the stmts. */
 
-   for (i = 0; i <  bb_in->stmts_used; i++) {
-      st = bb_in->stmts[i];
+   for (UInt i = 0; i <  bb_in->stmts->stmts_used; i++) {
+      IRStmt* st = bb_in->stmts->stmts[i];
       if (!st) continue;
-
-      tl_assert(isFlatIRStmt(st));
 
       /*
       if (!hasBogusLiterals) {
@@ -2657,7 +2657,7 @@ IRSB* mc_instrument ( void* closureV,
          }
       }
       */
-      first_stmt = bb->stmts_used;
+      first_stmt = bb->stmts->stmts_used;
 
       if (verboze) {
          ppIRStmt(st);
@@ -2667,8 +2667,8 @@ IRSB* mc_instrument ( void* closureV,
       switch (st->tag) {
 
          case Ist_WrTmp:
-            assign( bb, findShadowTmp(&mce, st->Ist.WrTmp.tmp), 
-                        expr2vbits( &mce, st->Ist.WrTmp.data) );
+            assign(bb->stmts, findShadowTmp(&mce, st->Ist.WrTmp.tmp), 
+                              expr2vbits( &mce, st->Ist.WrTmp.data));
             break;
 
          case Ist_Put:
@@ -2714,20 +2714,20 @@ IRSB* mc_instrument ( void* closureV,
       } /* switch (st->tag) */
 
       if (verboze) {
-         for (j = first_stmt; j < bb->stmts_used; j++) {
+         for (UInt j = first_stmt; j < bb->stmts->stmts_used; j++) {
             VG_(printf)("   ");
-            ppIRStmt(bb->stmts[j]);
+            ppIRStmt(bb->stmts->stmts[j]);
             VG_(printf)("\n");
          }
          VG_(printf)("\n");
       }
 
-      addStmtToIRSB(bb, st);
+      addStmtToIRStmtVec(bb->stmts, st);
 
    }
 
    /* Now we need to complain if the jump target is undefined. */
-   first_stmt = bb->stmts_used;
+   first_stmt = bb->stmts->stmts_used;
 
    if (verboze) {
       VG_(printf)("bb->next = ");
@@ -2738,9 +2738,9 @@ IRSB* mc_instrument ( void* closureV,
    complainIfUndefined( &mce, bb->next );
 
    if (verboze) {
-      for (j = first_stmt; j < bb->stmts_used; j++) {
+      for (UInt j = first_stmt; j < bb->stmts->stmts_used; j++) {
          VG_(printf)("   ");
-         ppIRStmt(bb->stmts[j]);
+         ppIRStmt(bb->stmts->stmts[j]);
          VG_(printf)("\n");
       }
       VG_(printf)("\n");
