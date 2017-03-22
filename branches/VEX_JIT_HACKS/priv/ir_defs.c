@@ -3753,12 +3753,18 @@ IRTemp newIRTemp ( IRTypeEnv* env, IRType ty )
 /*---------------------------------------------------------------*/
 
 inline 
-IRType typeOfIRTemp ( const IRTypeEnv* env, IRTemp tmp )
+IRType typeOfIRTemp(const IRStmtVec* stmts, IRTemp tmp)
 {
-   vassert(tmp.id == env->id);
-   vassert(tmp.index >= 0);
-   vassert(tmp.index < env->types_used);
-   return env->types[tmp.index];
+   const IRTypeEnv* tyenv = stmts->tyenv;
+   if (tyenv->id == tmp.id) {
+      vassert(tmp.index >= 0);
+      vassert(tmp.index < tyenv->types_used);
+      return tyenv->types[tmp.index];
+   } else if (stmts->parent != NULL) {
+      return typeOfIRTemp(stmts->parent, tmp);
+   } else {
+      vpanic("typeOfIRTemp");
+   }
 }
 
 IRType typeOfIRConst ( const IRConst* con )
@@ -3798,7 +3804,7 @@ void typeOfIRLoadGOp ( IRLoadGOp cvt,
    }
 }
 
-IRType typeOfIRExpr ( const IRTypeEnv* tyenv, const IRExpr* e )
+IRType typeOfIRExpr ( const IRStmtVec* stmts, const IRExpr* e )
 {
    IRType t_dst, t_arg1, t_arg2, t_arg3, t_arg4;
  start:
@@ -3810,7 +3816,7 @@ IRType typeOfIRExpr ( const IRTypeEnv* tyenv, const IRExpr* e )
       case Iex_GetI:
          return e->Iex.GetI.descr->elemTy;
       case Iex_RdTmp:
-         return typeOfIRTemp(tyenv, e->Iex.RdTmp.tmp);
+         return typeOfIRTemp(stmts, e->Iex.RdTmp.tmp);
       case Iex_Const:
          return typeOfIRConst(e->Iex.Const.con);
       case Iex_Qop:
@@ -3834,7 +3840,7 @@ IRType typeOfIRExpr ( const IRTypeEnv* tyenv, const IRExpr* e )
       case Iex_ITE:
          e = e->Iex.ITE.iffalse;
          goto start;
-         /* return typeOfIRExpr(tyenv, e->Iex.ITE.iffalse); */
+         /* return typeOfIRExpr(stmts, e->Iex.ITE.iffalse); */
       case Iex_Binder:
          vpanic("typeOfIRExpr: Binder is not a valid expression");
       case Iex_VECRET:
@@ -4411,16 +4417,15 @@ static
 void tcExpr(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
             const IRExpr* expr, IRType gWordTy)
 {
-   Int        i;
-   IRType     t_dst, t_arg1, t_arg2, t_arg3, t_arg4;
-   const IRTypeEnv* tyenv = stmts->tyenv;
+   Int    i;
+   IRType t_dst, t_arg1, t_arg2, t_arg3, t_arg4;
    switch (expr->tag) {
       case Iex_Get:
       case Iex_RdTmp:
          break;
       case Iex_GetI:
          tcExpr(bb, stmts, stmt, expr->Iex.GetI.ix, gWordTy);
-         if (typeOfIRExpr(tyenv,expr->Iex.GetI.ix) != Ity_I32)
+         if (typeOfIRExpr(stmts, expr->Iex.GetI.ix) != Ity_I32)
             sanityCheckFail(bb,stmt,"IRExpr.GetI.ix: not :: Ity_I32");
          if (!saneIRRegArray(expr->Iex.GetI.descr))
             sanityCheckFail(bb,stmt,"IRExpr.GetI.descr: invalid descr");
@@ -4443,10 +4448,10 @@ void tcExpr(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
                "Iex.Qop: wrong arity op\n"
                "... name of op precedes BB printout\n");
          }
-         ttarg1 = typeOfIRExpr(tyenv, qop->arg1);
-         ttarg2 = typeOfIRExpr(tyenv, qop->arg2);
-         ttarg3 = typeOfIRExpr(tyenv, qop->arg3);
-         ttarg4 = typeOfIRExpr(tyenv, qop->arg4);
+         ttarg1 = typeOfIRExpr(stmts, qop->arg1);
+         ttarg2 = typeOfIRExpr(stmts, qop->arg2);
+         ttarg3 = typeOfIRExpr(stmts, qop->arg3);
+         ttarg4 = typeOfIRExpr(stmts, qop->arg4);
          if (t_arg1 != ttarg1 || t_arg2 != ttarg2 
              || t_arg3 != ttarg3 || t_arg4 != ttarg4) {
             vex_printf(" op name: ");
@@ -4494,9 +4499,9 @@ void tcExpr(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
                "Iex.Triop: wrong arity op\n"
                "... name of op precedes BB printout\n");
          }
-         ttarg1 = typeOfIRExpr(tyenv, triop->arg1);
-         ttarg2 = typeOfIRExpr(tyenv, triop->arg2);
-         ttarg3 = typeOfIRExpr(tyenv, triop->arg3);
+         ttarg1 = typeOfIRExpr(stmts, triop->arg1);
+         ttarg2 = typeOfIRExpr(stmts, triop->arg2);
+         ttarg3 = typeOfIRExpr(stmts, triop->arg3);
          if (t_arg1 != ttarg1 || t_arg2 != ttarg2 || t_arg3 != ttarg3) {
             vex_printf(" op name: ");
             ppIROp(triop->op);
@@ -4537,8 +4542,8 @@ void tcExpr(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
                "Iex.Binop: wrong arity op\n"
                "... name of op precedes BB printout\n");
          }
-         ttarg1 = typeOfIRExpr(tyenv, expr->Iex.Binop.arg1);
-         ttarg2 = typeOfIRExpr(tyenv, expr->Iex.Binop.arg2);
+         ttarg1 = typeOfIRExpr(stmts, expr->Iex.Binop.arg1);
+         ttarg2 = typeOfIRExpr(stmts, expr->Iex.Binop.arg2);
          if (t_arg1 != ttarg1 || t_arg2 != ttarg2) {
             vex_printf(" op name: ");
             ppIROp(expr->Iex.Binop.op);
@@ -4567,12 +4572,12 @@ void tcExpr(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
          if (t_arg1 == Ity_INVALID || t_arg2 != Ity_INVALID
              || t_arg3 != Ity_INVALID || t_arg4 != Ity_INVALID)
             sanityCheckFail(bb,stmt,"Iex.Unop: wrong arity op");
-         if (t_arg1 != typeOfIRExpr(tyenv, expr->Iex.Unop.arg))
+         if (t_arg1 != typeOfIRExpr(stmts, expr->Iex.Unop.arg))
             sanityCheckFail(bb,stmt,"Iex.Unop: arg ty doesn't match op ty");
          break;
       case Iex_Load:
          tcExpr(bb, stmts, stmt, expr->Iex.Load.addr, gWordTy);
-         if (typeOfIRExpr(tyenv, expr->Iex.Load.addr) != gWordTy)
+         if (typeOfIRExpr(stmts, expr->Iex.Load.addr) != gWordTy)
             sanityCheckFail(bb,stmt,"Iex.Load.addr: not :: guest word type");
          if (expr->Iex.Load.end != Iend_LE && expr->Iex.Load.end != Iend_BE)
             sanityCheckFail(bb,stmt,"Iex.Load.end: bogus endianness");
@@ -4594,7 +4599,7 @@ void tcExpr(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
             sanityCheckFail(bb,stmt,
                             "Iex.CCall.retty: cannot return :: Ity_I1");
          for (i = 0; expr->Iex.CCall.args[i]; i++)
-            if (typeOfIRExpr(tyenv, expr->Iex.CCall.args[i]) == Ity_I1)
+            if (typeOfIRExpr(stmts, expr->Iex.CCall.args[i]) == Ity_I1)
                sanityCheckFail(bb,stmt,"Iex.CCall.arg: arg :: Ity_I1");
          break;
       case Iex_Const:
@@ -4605,10 +4610,10 @@ void tcExpr(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
          tcExpr(bb, stmts, stmt, expr->Iex.ITE.cond, gWordTy);
          tcExpr(bb, stmts, stmt, expr->Iex.ITE.iftrue, gWordTy);
          tcExpr(bb, stmts, stmt, expr->Iex.ITE.iffalse, gWordTy);
-         if (typeOfIRExpr(tyenv, expr->Iex.ITE.cond) != Ity_I1)
+         if (typeOfIRExpr(stmts, expr->Iex.ITE.cond) != Ity_I1)
             sanityCheckFail(bb,stmt,"Iex.ITE.cond: cond :: Ity_I1");
-         if (typeOfIRExpr(tyenv, expr->Iex.ITE.iftrue)
-             != typeOfIRExpr(tyenv, expr->Iex.ITE.iffalse))
+         if (typeOfIRExpr(stmts, expr->Iex.ITE.iftrue)
+             != typeOfIRExpr(stmts, expr->Iex.ITE.iffalse))
             sanityCheckFail(bb,stmt,"Iex.ITE: iftrue/iffalse mismatch");
          break;
       default: 
@@ -4620,12 +4625,16 @@ static
 void tcPhi(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
            const IRPhi* phi)
 {
-   const IRTypeEnv* tyenv = stmts->tyenv;
-   if (typeOfIRTemp(tyenv, phi->srcThen) != typeOfIRTemp(tyenv, phi->srcElse)) {
+   vassert(stmt->tag == Ist_IfThenElse);
+   const IRStmtVec* then_leg = stmt->Ist.IfThenElse.then_leg;
+   const IRStmtVec* else_leg = stmt->Ist.IfThenElse.else_leg;
+
+   if (typeOfIRTemp(then_leg, phi->srcThen)
+       != typeOfIRTemp(else_leg, phi->srcElse)) {
       sanityCheckFail(bb,stmt,"IRStmt.IfThenElse.Phi: 'then' and 'else' "
                                 "tmp do not match");
    }
-   if (typeOfIRTemp(tyenv, phi->dst) != typeOfIRTemp(tyenv, phi->srcThen)) {
+   if (typeOfIRTemp(stmts, phi->dst) != typeOfIRTemp(then_leg, phi->srcThen)) {
       sanityCheckFail(bb,stmt,"IRStmt.IfThenElse.Phi: 'dst' and 'then' "
                                 "tmp do not match");
    }
@@ -4635,8 +4644,7 @@ static
 void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
             Bool require_flat, IRType gWordTy)
 {
-   IRType     tyExpd, tyData;
-   const IRTypeEnv* tyenv = stmts->tyenv;
+   IRType tyExpd, tyData;
    switch (stmt->tag) {
       case Ist_IMark:
          /* Somewhat heuristic, but rule out totally implausible
@@ -4647,28 +4655,28 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
             sanityCheckFail(bb,stmt,"IRStmt.IMark.delta: implausible");
          break;
       case Ist_AbiHint:
-         if (typeOfIRExpr(tyenv, stmt->Ist.AbiHint.base) != gWordTy)
+         if (typeOfIRExpr(stmts, stmt->Ist.AbiHint.base) != gWordTy)
             sanityCheckFail(bb,stmt,"IRStmt.AbiHint.base: "
                                     "not :: guest word type");
-         if (typeOfIRExpr(tyenv, stmt->Ist.AbiHint.nia) != gWordTy)
+         if (typeOfIRExpr(stmts, stmt->Ist.AbiHint.nia) != gWordTy)
             sanityCheckFail(bb,stmt,"IRStmt.AbiHint.nia: "
                                     "not :: guest word type");
          break;
       case Ist_Put:
          tcExpr(bb, stmts, stmt, stmt->Ist.Put.data, gWordTy);
-         if (typeOfIRExpr(tyenv,stmt->Ist.Put.data) == Ity_I1)
+         if (typeOfIRExpr(stmts, stmt->Ist.Put.data) == Ity_I1)
             sanityCheckFail(bb,stmt,"IRStmt.Put.data: cannot Put :: Ity_I1");
          break;
       case Ist_PutI:{
          const IRPutI* puti = stmt->Ist.PutI.details;
          tcExpr(bb, stmts, stmt, puti->data, gWordTy);
          tcExpr(bb, stmts, stmt, puti->ix, gWordTy);
-         if (typeOfIRExpr(tyenv,puti->data) == Ity_I1)
+         if (typeOfIRExpr(stmts, puti->data) == Ity_I1)
             sanityCheckFail(bb,stmt,
                             "IRStmt.PutI.data: cannot PutI :: Ity_I1");
-         if (typeOfIRExpr(tyenv,puti->data) != puti->descr->elemTy)
+         if (typeOfIRExpr(stmts, puti->data) != puti->descr->elemTy)
             sanityCheckFail(bb,stmt,"IRStmt.PutI.data: data ty != elem ty");
-         if (typeOfIRExpr(tyenv,puti->ix) != Ity_I32)
+         if (typeOfIRExpr(stmts, puti->ix) != Ity_I32)
             sanityCheckFail(bb,stmt,"IRStmt.PutI.ix: not :: Ity_I32");
          if (!saneIRRegArray(puti->descr))
             sanityCheckFail(bb,stmt,"IRStmt.PutI.descr: invalid descr");
@@ -4676,18 +4684,18 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
       }
       case Ist_WrTmp:
          tcExpr(bb, stmts, stmt, stmt->Ist.WrTmp.data, gWordTy);
-         if (typeOfIRTemp(tyenv, stmt->Ist.WrTmp.tmp)
-             != typeOfIRExpr(tyenv, stmt->Ist.WrTmp.data))
+         if (typeOfIRTemp(stmts, stmt->Ist.WrTmp.tmp)
+             != typeOfIRExpr(stmts, stmt->Ist.WrTmp.data))
             sanityCheckFail(bb,stmt,
                             "IRStmt.Put.Tmp: tmp and expr do not match");
          break;
       case Ist_Store:
          tcExpr(bb, stmts, stmt, stmt->Ist.Store.addr, gWordTy);
          tcExpr(bb, stmts, stmt, stmt->Ist.Store.data, gWordTy);
-         if (typeOfIRExpr(tyenv, stmt->Ist.Store.addr) != gWordTy)
+         if (typeOfIRExpr(stmts, stmt->Ist.Store.addr) != gWordTy)
             sanityCheckFail(bb,stmt,
                             "IRStmt.Store.addr: not :: guest word type");
-         if (typeOfIRExpr(tyenv, stmt->Ist.Store.data) == Ity_I1)
+         if (typeOfIRExpr(stmts, stmt->Ist.Store.data) == Ity_I1)
             sanityCheckFail(bb,stmt,
                             "IRStmt.Store.data: cannot Store :: Ity_I1");
          if (stmt->Ist.Store.end != Iend_LE && stmt->Ist.Store.end != Iend_BE)
@@ -4698,11 +4706,11 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
          tcExpr(bb, stmts, stmt, sg->addr, gWordTy);
          tcExpr(bb, stmts, stmt, sg->data, gWordTy);
          tcExpr(bb, stmts, stmt, sg->guard, gWordTy);
-         if (typeOfIRExpr(tyenv, sg->addr) != gWordTy)
+         if (typeOfIRExpr(stmts, sg->addr) != gWordTy)
             sanityCheckFail(bb,stmt,"IRStmtG...addr: not :: guest word type");
-         if (typeOfIRExpr(tyenv, sg->data) == Ity_I1)
+         if (typeOfIRExpr(stmts, sg->data) == Ity_I1)
             sanityCheckFail(bb,stmt,"IRStmtG...data: cannot Store :: Ity_I1");
-         if (typeOfIRExpr(tyenv, sg->guard) != Ity_I1)
+         if (typeOfIRExpr(stmts, sg->guard) != Ity_I1)
             sanityCheckFail(bb,stmt,"IRStmtG...guard: not :: Ity_I1");
          if (sg->end != Iend_LE && sg->end != Iend_BE)
             sanityCheckFail(bb,stmt,"IRStmtG...end: bogus endianness");
@@ -4713,16 +4721,16 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
          tcExpr(bb, stmts, stmt, lg->addr, gWordTy);
          tcExpr(bb, stmts, stmt, lg->alt, gWordTy);
          tcExpr(bb, stmts, stmt, lg->guard, gWordTy);
-         if (typeOfIRExpr(tyenv, lg->guard) != Ity_I1)
+         if (typeOfIRExpr(stmts, lg->guard) != Ity_I1)
             sanityCheckFail(bb,stmt,"IRStmt.LoadG.guard: not :: Ity_I1");
-         if (typeOfIRExpr(tyenv, lg->addr) != gWordTy)
+         if (typeOfIRExpr(stmts, lg->addr) != gWordTy)
               sanityCheckFail(bb,stmt,"IRStmt.LoadG.addr: not "
                                       ":: guest word type");
-         if (typeOfIRExpr(tyenv, lg->alt) != typeOfIRTemp(tyenv, lg->dst))
+         if (typeOfIRExpr(stmts, lg->alt) != typeOfIRTemp(stmts, lg->dst))
              sanityCheckFail(bb,stmt,"IRStmt.LoadG: dst/alt type mismatch");
          IRType cvtRes = Ity_INVALID, cvtArg = Ity_INVALID;
          typeOfIRLoadGOp(lg->cvt, &cvtRes, &cvtArg);
-         if (cvtRes != typeOfIRTemp(tyenv, lg->dst))
+         if (cvtRes != typeOfIRTemp(stmts, lg->dst))
             sanityCheckFail(bb,stmt,"IRStmt.LoadG: dst/loaded type mismatch");
          break;
       }
@@ -4744,12 +4752,12 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
          }
          /* check the address type */
          tcExpr(bb, stmts, stmt, cas->addr, gWordTy);
-         if (typeOfIRExpr(tyenv, cas->addr) != gWordTy) goto bad_cas;
+         if (typeOfIRExpr(stmts, cas->addr) != gWordTy) goto bad_cas;
          /* check types on the {old,expd,data}Lo components agree */
-         tyExpd = typeOfIRExpr(tyenv, cas->expdLo);
-         tyData = typeOfIRExpr(tyenv, cas->dataLo);
+         tyExpd = typeOfIRExpr(stmts, cas->expdLo);
+         tyData = typeOfIRExpr(stmts, cas->dataLo);
          if (tyExpd != tyData) goto bad_cas;
-         if (tyExpd != typeOfIRTemp(tyenv, cas->oldLo))
+         if (tyExpd != typeOfIRTemp(stmts, cas->oldLo))
             goto bad_cas;
          /* check the base element type is sane */
          if (tyExpd == Ity_I8 || tyExpd == Ity_I16 || tyExpd == Ity_I32
@@ -4761,15 +4769,15 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
          /* If it's a DCAS, check types on the {old,expd,data}Hi
             components too */
          if (!isIRTempInvalid(cas->oldHi)) {
-            tyExpd = typeOfIRExpr(tyenv, cas->expdHi);
-            tyData = typeOfIRExpr(tyenv, cas->dataHi);
+            tyExpd = typeOfIRExpr(stmts, cas->expdHi);
+            tyData = typeOfIRExpr(stmts, cas->dataHi);
             if (tyExpd != tyData) goto bad_cas;
-            if (tyExpd != typeOfIRTemp(tyenv, cas->oldHi))
+            if (tyExpd != typeOfIRTemp(stmts, cas->oldHi))
                goto bad_cas;
             /* and finally check that oldLo and oldHi have the same
                type.  This forces equivalence amongst all 6 types. */
-            if (typeOfIRTemp(tyenv, cas->oldHi)
-                != typeOfIRTemp(tyenv, cas->oldLo))
+            if (typeOfIRTemp(stmts, cas->oldHi)
+                != typeOfIRTemp(stmts, cas->oldLo))
                goto bad_cas;
          }
          break;
@@ -4779,11 +4787,11 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
       }
       case Ist_LLSC: {
          IRType tyRes;
-         if (typeOfIRExpr(tyenv, stmt->Ist.LLSC.addr) != gWordTy)
+         if (typeOfIRExpr(stmts, stmt->Ist.LLSC.addr) != gWordTy)
             sanityCheckFail(bb,stmt,"IRStmt.LLSC.addr: not :: guest word type");
          if (stmt->Ist.LLSC.end != Iend_LE && stmt->Ist.LLSC.end != Iend_BE)
             sanityCheckFail(bb,stmt,"Ist.LLSC.end: bogus endianness");
-         tyRes = typeOfIRTemp(tyenv, stmt->Ist.LLSC.result);
+         tyRes = typeOfIRTemp(stmts, stmt->Ist.LLSC.result);
          if (stmt->Ist.LLSC.storedata == NULL) {
             /* it's a LL */
             if (tyRes != Ity_I64 && tyRes != Ity_I32
@@ -4793,7 +4801,7 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
             /* it's a SC */
             if (tyRes != Ity_I1)
                sanityCheckFail(bb,stmt,"Ist.LLSC(SC).result: not :: Ity_I1");
-            tyData = typeOfIRExpr(tyenv, stmt->Ist.LLSC.storedata);
+            tyData = typeOfIRExpr(stmts, stmt->Ist.LLSC.storedata);
             if (tyData != Ity_I64 && tyData != Ity_I32
                 && tyData != Ity_I16 && tyData != Ity_I8)
                sanityCheckFail(bb,stmt,
@@ -4832,12 +4840,12 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
          /* check guard */
          if (d->guard == NULL) goto bad_dirty;
          tcExpr(bb, stmts, stmt, d->guard, gWordTy);
-         if (typeOfIRExpr(tyenv, d->guard) != Ity_I1)
+         if (typeOfIRExpr(stmts, d->guard) != Ity_I1)
             sanityCheckFail(bb,stmt,"IRStmt.Dirty.guard not :: Ity_I1");
          /* check types, minimally */
          IRType retTy = Ity_INVALID;
          if (!isIRTempInvalid(d->tmp)) {
-            retTy = typeOfIRTemp(tyenv, d->tmp);
+            retTy = typeOfIRTemp(stmts, d->tmp);
             if (retTy == Ity_I1)
                sanityCheckFail(bb,stmt,"IRStmt.Dirty.dst :: Ity_I1");
          }
@@ -4851,7 +4859,7 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
             } else if (UNLIKELY(arg->tag == Iex_GSPTR)) {
                nGSPTRs++;
             } else {
-               if (typeOfIRExpr(tyenv, arg) == Ity_I1)
+               if (typeOfIRExpr(stmts, arg) == Ity_I1)
                   sanityCheckFail(bb,stmt,"IRStmt.Dirty.arg[i] :: Ity_I1");
             }
             if (nGSPTRs > 1) {
@@ -4902,7 +4910,7 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
          break;
       case Ist_Exit:
          tcExpr(bb, stmts, stmt, stmt->Ist.Exit.guard, gWordTy);
-         if (typeOfIRExpr(tyenv,stmt->Ist.Exit.guard) != Ity_I1)
+         if (typeOfIRExpr(stmts,stmt->Ist.Exit.guard) != Ity_I1)
             sanityCheckFail(bb,stmt,"IRStmt.Exit.guard: not :: Ity_I1");
          if (!saneIRConst(stmt->Ist.Exit.dst))
             sanityCheckFail(bb,stmt,"IRStmt.Exit.dst: bad dst");
@@ -4914,7 +4922,7 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
          break;
       case Ist_IfThenElse:
          tcExpr(bb, stmts, stmt, stmt->Ist.IfThenElse.cond, gWordTy);
-         if (typeOfIRExpr(tyenv, stmt->Ist.IfThenElse.cond) != Ity_I1)
+         if (typeOfIRExpr(stmts, stmt->Ist.IfThenElse.cond) != Ity_I1)
             sanityCheckFail(bb,stmt,"IRStmt.IfThenElse.cond: not :: Ity_I1");
          /* Traversing into legs and phi nodes driven from
             sanityCheckIRStmtVec(). */
@@ -4973,7 +4981,7 @@ void sanityCheckIRStmtVec(const IRSB* bb, const IRStmtVec* stmts,
    /* Ensure each temp has a plausible type. */
    for (UInt i = 0; i < n_temps; i++) {
       IRTemp temp = mkIRTemp(id, i);
-      IRType ty = typeOfIRTemp(tyenv, temp);
+      IRType ty = typeOfIRTemp(stmts, temp);
       if (!isPlausibleIRType(ty)) {
          vex_printf("Temp ");
          ppIRTemp(temp);
@@ -5060,7 +5068,7 @@ void sanityCheckIRSB(const IRSB* bb, const  HChar* caller, Bool require_flat,
    }
 
    /* Typecheck also next destination. */
-   if (typeOfIRExpr(bb->stmts->tyenv, bb->next) != gWordTy) {
+   if (typeOfIRExpr(bb->stmts, bb->next) != gWordTy) {
       sanityCheckFail(bb, NULL, "bb->next field has wrong type");
    }
    /* because it would intersect with host_EvC_* */

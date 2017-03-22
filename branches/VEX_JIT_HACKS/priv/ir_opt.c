@@ -287,7 +287,7 @@ static IRExpr* flatten_Expr(IRStmtVec* stmts, IRExpr* ex)
    Int i;
    IRExpr** newargs;
    IRTypeEnv* tyenv = stmts->tyenv;
-   IRType ty = typeOfIRExpr(tyenv, ex);
+   IRType ty = typeOfIRExpr(stmts, ex);
    IRTemp t1;
 
    switch (ex->tag) {
@@ -652,7 +652,7 @@ static void redundant_get_removal_IRStmtVec(IRStmtVec* stmts)
                be to stick in a reinterpret-style cast, although that
                would make maintaining flatness more difficult. */
             IRExpr* valE    = (IRExpr*)val;
-            Bool    typesOK = toBool( typeOfIRExpr(stmts->tyenv,valE) 
+            Bool    typesOK = toBool( typeOfIRExpr(stmts, valE) 
                                       == st->Ist.WrTmp.data->Iex.Get.ty );
             if (typesOK && DEBUG_IROPT) {
                vex_printf("rGET: "); ppIRExpr(get);
@@ -676,7 +676,7 @@ static void redundant_get_removal_IRStmtVec(IRStmtVec* stmts)
          UInt k_lo, k_hi;
          if (st->tag == Ist_Put) {
             key = mk_key_GetPut( st->Ist.Put.offset, 
-                                 typeOfIRExpr(stmts->tyenv,st->Ist.Put.data) );
+                                 typeOfIRExpr(stmts, st->Ist.Put.data) );
          } else {
             vassert(st->tag == Ist_PutI);
             key = mk_key_GetIPutI( st->Ist.PutI.details->descr );
@@ -960,7 +960,7 @@ static void redundant_put_removal_IRStmtVec(
          case Ist_Put: 
             isPut = True;
             key = mk_key_GetPut( st->Ist.Put.offset, 
-                                 typeOfIRExpr(stmts->tyenv,st->Ist.Put.data) );
+                                 typeOfIRExpr(stmts, st->Ist.Put.data) );
             vassert(isIRAtom(st->Ist.Put.data));
             break;
          case Ist_PutI:
@@ -1024,7 +1024,7 @@ static void redundant_put_removal_BB(
       writes the IP (or, whatever it claims to write.  We don't
       care.) */
    UInt key = mk_key_GetPut(bb->offsIP,
-                            typeOfIRExpr(bb->stmts->tyenv, bb->next));
+                            typeOfIRExpr(bb->stmts, bb->next));
    addToHHW(env, (HWord)key, 0);
 
    redundant_put_removal_IRStmtVec(bb->stmts, preciseMemExnsFn, pxControl, env);
@@ -4086,7 +4086,7 @@ static Bool do_cse_IRStmtVec(IRStmtVec* stmts, Bool allowLoadsToBeCSEd)
                          ae->u.GetIt.descr, 
                          IRExpr_RdTmp(ae->u.GetIt.ix), 
                          st->Ist.Put.offset, 
-                         typeOfIRExpr(stmts->tyenv,st->Ist.Put.data) 
+                         typeOfIRExpr(stmts, st->Ist.Put.data) 
                       ) != NoAlias) 
                      invalidate = True;
                }
@@ -4399,7 +4399,7 @@ IRExpr* findPutI(IRStmtVec* stmts, Int startHere,
             = getAliasingRelation_IC(
                  descrG, ixG,
                  st->Ist.Put.offset,
-                 typeOfIRExpr(stmts->tyenv,st->Ist.Put.data) );
+                 typeOfIRExpr(stmts, st->Ist.Put.data) );
 
          if (relation == NoAlias) {
             /* we're OK; keep going */
@@ -4489,7 +4489,7 @@ static Bool identicalPutIs ( IRStmt* pi, IRStmt* s2 )
 
 static 
 Bool guestAccessWhichMightOverlapPutI ( 
-        IRTypeEnv* tyenv, IRStmt* pi, IRStmt* s2 
+        IRStmtVec* stmts, IRStmt* pi, IRStmt* s2 
      )
 {
    GSAliasing relation;
@@ -4531,7 +4531,7 @@ Bool guestAccessWhichMightOverlapPutI (
             = getAliasingRelation_IC(
                  p1->descr, p1->ix,
                  s2->Ist.Put.offset, 
-                 typeOfIRExpr(tyenv,s2->Ist.Put.data)
+                 typeOfIRExpr(stmts, s2->Ist.Put.data)
               );
          goto have_relation;
 
@@ -4612,7 +4612,7 @@ void do_redundant_GetI_elimination(IRStmtVec* stmts)
          if (replacement 
              && isIRAtom(replacement)
              /* Make sure we're doing a type-safe transformation! */
-             && typeOfIRExpr(stmts->tyenv, replacement) == descr->elemTy) {
+             && typeOfIRExpr(stmts, replacement) == descr->elemTy) {
             if (DEBUG_IROPT) {
                vex_printf("rGI:  "); 
                ppIRExpr(st->Ist.WrTmp.data);
@@ -4679,7 +4679,7 @@ static void do_redundant_PutI_elimination(IRStmtVec* stmts,
          if (st->tag == Ist_Dirty)
             /* give up; could do better here */
             break;
-         if (guestAccessWhichMightOverlapPutI(stmts->tyenv, st, stj))
+         if (guestAccessWhichMightOverlapPutI(stmts, st, stj))
             /* give up */
            break;
       }
@@ -5879,7 +5879,7 @@ static Interval stmt_modifies_guest_state (
    switch (st->tag) {
    case Ist_Put: {
       Int offset = st->Ist.Put.offset;
-      Int size = sizeofIRType(typeOfIRExpr(bb->stmts->tyenv, st->Ist.Put.data));
+      Int size = sizeofIRType(typeOfIRExpr(bb->stmts, st->Ist.Put.data));
 
       *requiresPreciseMemExns
          = preciseMemExnsFn(offset, offset + size - 1, pxControl);
@@ -6736,7 +6736,7 @@ static void considerExpensives_IRStmtVec(/*OUT*/Bool* hasGetIorPutI,
          case Ist_WrTmp:  
             if (st->Ist.WrTmp.data->tag == Iex_GetI)
                *hasGetIorPutI = True;
-            switch (typeOfIRTemp(stmts->tyenv, st->Ist.WrTmp.tmp)) {
+            switch (typeOfIRTemp(stmts, st->Ist.WrTmp.tmp)) {
                case Ity_I1: case Ity_I8: case Ity_I16: 
                case Ity_I32: case Ity_I64: case Ity_I128: 
                   break;

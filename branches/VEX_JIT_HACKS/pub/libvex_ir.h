@@ -3215,8 +3215,8 @@ extern IRTypeEnv *emptyIRTypeEnv(void);
 
 /* What is the type of this expression? */
 extern IRType typeOfIRConst ( const IRConst* );
-extern IRType typeOfIRTemp  ( const IRTypeEnv*, IRTemp );
-extern IRType typeOfIRExpr  ( const IRTypeEnv*, const IRExpr* );
+extern IRType typeOfIRTemp  ( const IRStmtVec*, IRTemp );
+extern IRType typeOfIRExpr  ( const IRStmtVec*, const IRExpr* );
 
 /* What are the arg and result type for this IRLoadGOp? */
 extern void typeOfIRLoadGOp ( IRLoadGOp cvt,

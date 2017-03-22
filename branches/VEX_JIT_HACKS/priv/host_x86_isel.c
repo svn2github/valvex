@@ -172,7 +172,7 @@ static Bool isZeroU32 ( IRExpr* e )
 typedef
    struct {
       /* Constant -- are set at the start and do not change. */
-      IRTypeEnv*   type_env;
+      IRStmtVec*   stmts;
 
       HReg*        vregmap;
       HReg*        vregmapHI;
@@ -359,7 +359,7 @@ static Int pushArg ( ISelEnv* env, IRExpr* arg, HReg r_vecRetAddr )
       return 1;
    }
    /* Else it's a "normal" expression. */
-   IRType arg_ty = typeOfIRExpr(env->type_env, arg);
+   IRType arg_ty = typeOfIRExpr(env->stmts, arg);
    if (arg_ty == Ity_I32) {
       addInstr(env, X86Instr_Push(iselIntExpr_RMI(env, arg)));
       return 1;
@@ -593,7 +593,7 @@ void doHelperCall ( /*OUT*/UInt*   stackAdjustAfterCall,
             else if (UNLIKELY(arg->tag == Iex_GSPTR)) {
                vassert(0); //ATC
             } else {
-               vassert(typeOfIRExpr(env->type_env, arg) == Ity_I32);
+               vassert(typeOfIRExpr(env->stmts, arg) == Ity_I32);
                tmpregs[argreg] = iselIntExpr_R(env, arg);
             }
             not_done_yet--;
@@ -620,7 +620,7 @@ void doHelperCall ( /*OUT*/UInt*   stackAdjustAfterCall,
             else if (UNLIKELY(arg->tag == Iex_GSPTR)) {
                vassert(0); //ATC
             } else {
-               vassert(typeOfIRExpr(env->type_env, arg) == Ity_I32);
+               vassert(typeOfIRExpr(env->stmts, arg) == Ity_I32);
                addInstr(env, X86Instr_Alu32R(Xalu_MOV, 
                                              iselIntExpr_RMI(env, arg),
                                              argregs[argreg]));
@@ -854,7 +854,7 @@ static HReg iselIntExpr_R_wrk ( ISelEnv* env, const IRExpr* e )
 {
    MatchInfo mi;
 
-   IRType ty = typeOfIRExpr(env->type_env,e);
+   IRType ty = typeOfIRExpr(env->stmts, e);
    vassert(ty == Ity_I32 || ty == Ity_I16 || ty == Ity_I8);
 
    switch (e->tag) {
@@ -1495,7 +1495,7 @@ static HReg iselIntExpr_R_wrk ( ISelEnv* env, const IRExpr* e )
    /* --------- MULTIPLEX --------- */
    case Iex_ITE: { // VFD
      if ((ty == Ity_I32 || ty == Ity_I16 || ty == Ity_I8)
-         && typeOfIRExpr(env->type_env,e->Iex.ITE.cond) == Ity_I1) {
+         && typeOfIRExpr(env->stmts, e->Iex.ITE.cond) == Ity_I1) {
         HReg   r1  = iselIntExpr_R(env, e->Iex.ITE.iftrue);
         X86RM* r0  = iselIntExpr_RM(env, e->Iex.ITE.iffalse);
         HReg   dst = newVRegI(env);
@@ -1558,7 +1558,7 @@ static X86AMode* iselIntExpr_AMode ( ISelEnv* env, const IRExpr* e )
 /* DO NOT CALL THIS DIRECTLY ! */
 static X86AMode* iselIntExpr_AMode_wrk ( ISelEnv* env, const IRExpr* e )
 {
-   IRType ty = typeOfIRExpr(env->type_env,e);
+   IRType ty = typeOfIRExpr(env->stmts, e);
    vassert(ty == Ity_I32);
 
    /* Add32( Add32(expr1, Shl32(expr2, simm)), imm32 ) */
@@ -1645,7 +1645,7 @@ static X86RMI* iselIntExpr_RMI ( ISelEnv* env, const IRExpr* e )
 /* DO NOT CALL THIS DIRECTLY ! */
 static X86RMI* iselIntExpr_RMI_wrk ( ISelEnv* env, const IRExpr* e )
 {
-   IRType ty = typeOfIRExpr(env->type_env,e);
+   IRType ty = typeOfIRExpr(env->stmts, e);
    vassert(ty == Ity_I32 || ty == Ity_I16 || ty == Ity_I8);
 
    /* special case: immediate */
@@ -1705,7 +1705,7 @@ static X86RI* iselIntExpr_RI ( ISelEnv* env, const IRExpr* e )
 /* DO NOT CALL THIS DIRECTLY ! */
 static X86RI* iselIntExpr_RI_wrk ( ISelEnv* env, const IRExpr* e )
 {
-   IRType ty = typeOfIRExpr(env->type_env,e);
+   IRType ty = typeOfIRExpr(env->stmts, e);
    vassert(ty == Ity_I32 || ty == Ity_I16 || ty == Ity_I8);
 
    /* special case: immediate */
@@ -1753,7 +1753,7 @@ static X86RM* iselIntExpr_RM ( ISelEnv* env, const IRExpr* e )
 /* DO NOT CALL THIS DIRECTLY ! */
 static X86RM* iselIntExpr_RM_wrk ( ISelEnv* env, const IRExpr* e )
 {
-   IRType ty = typeOfIRExpr(env->type_env,e);
+   IRType ty = typeOfIRExpr(env->stmts, e);
    vassert(ty == Ity_I32 || ty == Ity_I16 || ty == Ity_I8);
 
    /* special case: 32-bit GET */
@@ -1790,7 +1790,7 @@ static X86CondCode iselCondCode_wrk ( ISelEnv* env, const IRExpr* e )
    MatchInfo mi;
 
    vassert(e);
-   vassert(typeOfIRExpr(env->type_env,e) == Ity_I1);
+   vassert(typeOfIRExpr(env->stmts, e) == Ity_I1);
 
    /* var */
    if (e->tag == Iex_RdTmp) {
@@ -2091,7 +2091,7 @@ static void iselInt64Expr_wrk ( HReg* rHi, HReg* rLo, ISelEnv* env,
    MatchInfo mi;
    HWord fn = 0; /* helper fn for most SIMD64 stuff */
    vassert(e);
-   vassert(typeOfIRExpr(env->type_env,e) == Ity_I64);
+   vassert(typeOfIRExpr(env->stmts, e) == Ity_I64);
 
    /* 64-bit literal */
    if (e->tag == Iex_Const) {
@@ -2889,7 +2889,7 @@ static HReg iselFltExpr ( ISelEnv* env, const IRExpr* e )
 /* DO NOT CALL THIS DIRECTLY */
 static HReg iselFltExpr_wrk ( ISelEnv* env, const IRExpr* e )
 {
-   IRType ty = typeOfIRExpr(env->type_env,e);
+   IRType ty = typeOfIRExpr(env->stmts, e);
    vassert(ty == Ity_F32);
 
    if (e->tag == Iex_RdTmp) {
@@ -3006,7 +3006,7 @@ static HReg iselDblExpr ( ISelEnv* env, const IRExpr* e )
 /* DO NOT CALL THIS DIRECTLY */
 static HReg iselDblExpr_wrk ( ISelEnv* env, const IRExpr* e )
 {
-   IRType ty = typeOfIRExpr(env->type_env,e);
+   IRType ty = typeOfIRExpr(env->stmts, e);
    vassert(e);
    vassert(ty == Ity_F64);
 
@@ -3223,7 +3223,7 @@ static HReg iselDblExpr_wrk ( ISelEnv* env, const IRExpr* e )
    /* --------- MULTIPLEX --------- */
    if (e->tag == Iex_ITE) { // VFD
      if (ty == Ity_F64
-         && typeOfIRExpr(env->type_env,e->Iex.ITE.cond) == Ity_I1) {
+         && typeOfIRExpr(env->stmts, e->Iex.ITE.cond) == Ity_I1) {
         HReg r1  = iselDblExpr(env, e->Iex.ITE.iftrue);
         HReg r0  = iselDblExpr(env, e->Iex.ITE.iffalse);
         HReg dst = newVRegF(env);
@@ -3277,7 +3277,7 @@ static HReg iselVecExpr_wrk ( ISelEnv* env, const IRExpr* e )
    MatchInfo mi;
    Bool      arg1isEReg = False;
    X86SseOp  op = Xsse_INVALID;
-   IRType    ty = typeOfIRExpr(env->type_env,e);
+   IRType    ty = typeOfIRExpr(env->stmts, e);
    vassert(e);
    vassert(ty == Ity_V128);
 
@@ -3873,8 +3873,8 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
 
    /* --------- STORE --------- */
    case Ist_Store: {
-      IRType    tya   = typeOfIRExpr(env->type_env, stmt->Ist.Store.addr);
-      IRType    tyd   = typeOfIRExpr(env->type_env, stmt->Ist.Store.data);
+      IRType    tya   = typeOfIRExpr(env->stmts, stmt->Ist.Store.addr);
+      IRType    tyd   = typeOfIRExpr(env->stmts, stmt->Ist.Store.data);
       IREndness end   = stmt->Ist.Store.end;
 
       if (tya != Ity_I32 || end != Iend_LE) 
@@ -3926,7 +3926,7 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
 
    /* --------- PUT --------- */
    case Ist_Put: {
-      IRType ty = typeOfIRExpr(env->type_env, stmt->Ist.Put.data);
+      IRType ty = typeOfIRExpr(env->stmts, stmt->Ist.Put.data);
       if (ty == Ity_I32) {
          /* We're going to write to memory, so compute the RHS into an
             X86RI. */
@@ -3989,7 +3989,7 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
               env, puti->descr, 
                    puti->ix, puti->bias );
 
-      IRType ty = typeOfIRExpr(env->type_env, puti->data);
+      IRType ty = typeOfIRExpr(env->stmts, puti->data);
       if (ty == Ity_F64) {
          HReg val = iselDblExpr(env, puti->data);
          addInstr(env, X86Instr_FpLdSt( False/*store*/, 8, val, am ));
@@ -4019,7 +4019,7 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
    /* --------- TMP --------- */
    case Ist_WrTmp: {
       IRTemp tmp = stmt->Ist.WrTmp.tmp;
-      IRType ty = typeOfIRTemp(env->type_env, tmp);
+      IRType ty = typeOfIRTemp(env->stmts, tmp);
 
       /* optimisation: if stmt->Ist.WrTmp.data is Add32(..,..),
          compute it into an AMode and then use LEA.  This usually
@@ -4092,7 +4092,7 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
       /* Figure out the return type, if any. */
       IRType retty = Ity_INVALID;
       if (!isIRTempInvalid(d->tmp))
-         retty = typeOfIRTemp(env->type_env, d->tmp);
+         retty = typeOfIRTemp(env->stmts, d->tmp);
 
       Bool retty_ok = False;
       switch (retty) {
@@ -4180,7 +4180,7 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
          /* "normal" singleton CAS */
          UChar  sz;
          IRCAS* cas = stmt->Ist.CAS.details;
-         IRType ty  = typeOfIRExpr(env->type_env, cas->dataLo);
+         IRType ty  = typeOfIRExpr(env->stmts, cas->dataLo);
          /* get: cas->expdLo into %eax, and cas->dataLo into %ebx */
          X86AMode* am = iselIntExpr_AMode(env, cas->addr);
          HReg rDataLo = iselIntExpr_R(env, cas->dataLo);
@@ -4205,7 +4205,7 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
       } else {
          /* double CAS */
          IRCAS* cas = stmt->Ist.CAS.details;
-         IRType ty  = typeOfIRExpr(env->type_env, cas->dataLo);
+         IRType ty  = typeOfIRExpr(env->stmts, cas->dataLo);
          /* only 32-bit allowed in this case */
          /* get: cas->expdLo into %eax, and cas->dataLo into %ebx */
          /* get: cas->expdHi into %edx, and cas->dataHi into %ecx */
@@ -4457,9 +4457,9 @@ HInstrArray* iselSB_X86 ( const IRSB* bb,
    env->code = newHInstrArray();
 
    /* Copy BB's type env. */
-   /* TODO-JIT: Works only with IRTypeEnv ID #0. */
-   vassert(bb->stmts->tyenv->id == 0);
-   env->type_env = bb->stmts->tyenv;
+   /* TODO-JIT: Currently works only with no if-then-else statements. */
+   vassert(bb->id_seq == 1);
+   env->stmts = bb->stmts;
 
    /* Make up an IRTemp -> virtual HReg mapping.  This doesn't
       change as we go along. */

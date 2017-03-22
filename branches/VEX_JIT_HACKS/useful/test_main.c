@@ -387,7 +387,7 @@ IRSB* ac_instrument (IRSB* bb_in, VexGuestLayout* layout, IRType hWordTy )
             addr = st->Ist.STle.addr;
             assert(isIRAtom(data));
             assert(isIRAtom(addr));
-            sz = sizeofIRType(typeOfIRExpr(bb_in->tyenv, data));
+            sz = sizeofIRType(typeOfIRExpr(bb_in->stmts, data));
             needSz = False;
             switch (sz) {
                case 4: helper = mkIRCallee(1, "ac_helperc_STORE4", 
@@ -982,7 +982,7 @@ static IRAtom* mkPCastTo( MCEnv* mce, IRType dst_ty, IRAtom* vbits )
    /* Note, dst_ty is a shadow type, not an original type. */
    /* First of all, collapse vbits down to a single bit. */
    tl_assert(isShadowAtom(mce,vbits));
-   ty   = typeOfIRExpr(mce->bb->stmts->tyenv, vbits);
+   ty   = typeOfIRExpr(mce->bb->stmts, vbits);
    tmp1 = NULL;
    switch (ty) {
       case Ity_I1:
@@ -1074,7 +1074,7 @@ static void complainIfUndefined ( MCEnv* mce, IRAtom* atom )
    tl_assert(isShadowAtom(mce, vatom));
    tl_assert(sameKindedAtoms(atom, vatom));
 
-   ty = typeOfIRExpr(mce->bb->stmts->tyenv, vatom);
+   ty = typeOfIRExpr(mce->bb->stmts, vatom);
 
    /* sz is only used for constructing the error message */
    sz = ty==Ity_I1 ? 0 : sizeofIRType(ty);
@@ -1184,7 +1184,7 @@ void do_shadow_PUT ( MCEnv* mce,  Int offset,
       tl_assert(isShadowAtom(mce, vatom));
    }
 
-   ty = typeOfIRExpr(mce->bb->stmts->tyenv, vatom);
+   ty = typeOfIRExpr(mce->bb->stmts, vatom);
    tl_assert(ty != Ity_I1);
    if (isAlwaysDefd(mce, offset, sizeofIRType(ty))) {
       /* later: no ... */
@@ -2147,7 +2147,7 @@ IRAtom* expr2vbits_ITE ( MCEnv* mce,
    vbitsC = expr2vbits(mce, cond);
    vbits0 = expr2vbits(mce, iffalse);
    vbits1 = expr2vbits(mce, iftrue);
-   ty = typeOfIRExpr(mce->bb->stmts->tyenv, vbits0);
+   ty = typeOfIRExpr(mce->bb->stmts, vbits0);
 
    return
       mkUifU(mce, ty, assignNew(mce, ty, IRExpr_ITE(cond, vbits1, vbits0)),
@@ -2172,7 +2172,7 @@ IRExpr* expr2vbits ( MCEnv* mce, IRExpr* e )
          return IRExpr_RdTmp( findShadowTmp(mce, e->Iex.RdTmp.tmp) );
 
       case Iex_Const:
-         return definedOfType(shadowType(typeOfIRExpr(mce->bb->stmts->tyenv, e)));
+         return definedOfType(shadowType(typeOfIRExpr(mce->bb->stmts, e)));
 
       case Iex_Binop:
          return expr2vbits_Binop(
@@ -2219,7 +2219,7 @@ IRExpr* zwidenToHostWord ( MCEnv* mce, IRAtom* vatom )
    /* vatom is vbits-value and as such can only have a shadow type. */
    tl_assert(isShadowAtom(mce,vatom));
 
-   ty  = typeOfIRExpr(mce->bb->stmts->tyenv, vatom);
+   ty  = typeOfIRExpr(mce->bb->stmts, vatom);
    tyH = mce->hWordTy;
 
    if (tyH == Ity_I32) {
@@ -2277,7 +2277,7 @@ void do_shadow_STle ( MCEnv* mce,
    tl_assert(isOriginalAtom(mce,addr));
    tl_assert(isShadowAtom(mce,vdata));
 
-   ty = typeOfIRExpr(mce->bb->stmts->tyenv, vdata);
+   ty = typeOfIRExpr(mce->bb->stmts, vdata);
 
    /* First, emit a definedness test for the address.  This also sets
       the address (shadow) to 'defined' following the test. */
@@ -2443,7 +2443,7 @@ void do_shadow_Dirty ( MCEnv* mce, IRDirty* d )
       tl_assert(d->mAddr);
       complainIfUndefined(mce, d->mAddr);
 
-      tyAddr = typeOfIRExpr(mce->bb->stmts->tyenv, d->mAddr);
+      tyAddr = typeOfIRExpr(mce->bb->stmts, d->mAddr);
       tl_assert(tyAddr == Ity_I32 || tyAddr == Ity_I64);
       tl_assert(tyAddr == mce->hWordTy); /* not really right */
    }
@@ -2482,7 +2482,7 @@ void do_shadow_Dirty ( MCEnv* mce, IRDirty* d )
    /* Outputs: the destination temporary, if there is one. */
    if (!isIRTempInvalid(d->tmp)) {
       dst   = findShadowTmp(mce, d->tmp);
-      tyDst = typeOfIRTemp(mce->bb->stmts->tyenv, d->tmp);
+      tyDst = typeOfIRTemp(mce->bb->stmts, d->tmp);
       assign(mce->bb->stmts, dst, mkPCastTo(mce, tyDst, curr));
    }
 
