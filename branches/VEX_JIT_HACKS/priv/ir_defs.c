@@ -3755,6 +3755,7 @@ IRTemp newIRTemp ( IRTypeEnv* env, IRType ty )
 inline 
 IRType typeOfIRTemp ( const IRTypeEnv* env, IRTemp tmp )
 {
+   vassert(tmp.id == env->id);
    vassert(tmp.index >= 0);
    vassert(tmp.index < env->types_used);
    return env->types[tmp.index];
@@ -4214,32 +4215,31 @@ void useBeforeDef_Expr(const IRSB *bb, const IRStmtVec* stmts,
    }
 }
 
-static
-void useBeforeDef_PhiNodes(const IRSB* bb, const IRStmtVec* stmts,
-                           const IRStmt* stmt, const IRPhiVec* phi_nodes,
-                           UInt* def_counts[])
+static void useBeforeDef_IRPhi(const IRSB* bb, const IRStmtVec* stmts,
+                               const IRStmt* stmt, const IRPhi* phi,
+                               UInt* def_counts[])
 {
    vassert(stmt->tag == Ist_IfThenElse);
 
-   for (UInt i = 0; i < phi_nodes->phis_used; i++) {
-      const IRPhi* phi = phi_nodes->phis[i];
-      useBeforeDef_Temp(bb, stmts, stmt, phi->srcThen, def_counts);
-      useBeforeDef_Temp(bb, stmts, stmt, phi->srcElse, def_counts);
+   IRStmtVec* then_leg = stmt->Ist.IfThenElse.then_leg;
+   IRStmtVec* else_leg = stmt->Ist.IfThenElse.else_leg;
 
-      /* Check also that referenced IRStmtVec's actually exist and belong to
-         "parent", "then", and "else", respectively. */
-      if (phi->dst.id != stmts->tyenv->id) {
-         sanityCheckFail(bb,stmt,"Istmt.IfThenElse.Phi.dst does not "
-                                    "reference parent IRStmtVec");
-      }
-      if (phi->srcThen.id != stmt->Ist.IfThenElse.then_leg->tyenv->id) {
-         sanityCheckFail(bb,stmt,"Istmt.IfThenElse.Phi.srcThen does not "
-                                    "reference \"then\" IRStmtVec leg");
-      }
-      if (phi->srcElse.id != stmt->Ist.IfThenElse.else_leg->tyenv->id) {
-         sanityCheckFail(bb,stmt,"Istmt.IfThenElse.Phi.srcElse does not "
-                                    "reference \"else\" IRStmtVec leg");
-      }
+   useBeforeDef_Temp(bb, then_leg, stmt, phi->srcThen, def_counts);
+   useBeforeDef_Temp(bb, else_leg, stmt, phi->srcElse, def_counts);
+
+   /* Check also that referenced IRStmtVec's actually exist and belong to
+      "parent", "then", and "else", respectively. */
+   if (phi->dst.id != stmts->tyenv->id) {
+      sanityCheckFail(bb, stmt, "Istmt.IfThenElse.Phi.dst does not "
+                                "reference parent IRStmtVec");
+   }
+   if (phi->srcThen.id != then_leg->tyenv->id) {
+      sanityCheckFail(bb, stmt, "Istmt.IfThenElse.Phi.srcThen does not "
+                                "reference \"then\" IRStmtVec leg");
+   }
+   if (phi->srcElse.id != else_leg->tyenv->id) {
+      sanityCheckFail(bb, stmt, "Istmt.IfThenElse.Phi.srcElse does not "
+                                "reference \"else\" IRStmtVec leg");
    }
 }
 
@@ -4326,11 +4326,8 @@ void useBeforeDef_Stmt(const IRSB* bb, const IRStmtVec* stmts,
       case Ist_IfThenElse:
          useBeforeDef_Expr(bb, stmts, stmt, stmt->Ist.IfThenElse.cond,
                            def_counts);
-         /* Traversing into legs driven from sanityCheckIRStmtVec(). */
-         if (stmt->Ist.IfThenElse.phi_nodes != NULL) {
-            useBeforeDef_PhiNodes(bb, stmts, stmt,
-                                  stmt->Ist.IfThenElse.phi_nodes, def_counts);
-         }
+         /* Traversing into legs and phi nodes driven from
+            sanityCheckIRStmtVec(). */
          break;
       default: 
          vpanic("useBeforeDef_Stmt");
@@ -4387,17 +4384,8 @@ void assignedOnce_Stmt(const IRSB* bb, const IRStmtVec* stmts,
          "IRStmt.LLSC: destination tmp is assigned more than once");
       break;
    case Ist_IfThenElse: {
-      /* Traversing into legs driven from sanityCheckIRStmtVec(). */
-      const IRPhiVec* phi_nodes = stmt->Ist.IfThenElse.phi_nodes;
-      if (phi_nodes != NULL) {
-         for (UInt i = 0; i < phi_nodes->phis_used; i++) {
-            assignedOnce_Temp(
-               bb, stmts, stmt, phi_nodes->phis[i]->dst, def_counts,
-               "IRStmt.IfThenElse.Phi: destination tmp is out of range",
-               "IRStmt.IfThenElse.Phi: destination tmp is out of scope",
-               "IRStmt.IfThenElse: destination tmp is assigned more than once");
-         }
-      }
+      /* Traversing into legs and phi nodes driven from
+         sanityCheckIRStmtVec(). */
       break;
    }
    // Ignore all other cases
@@ -4407,6 +4395,16 @@ void assignedOnce_Stmt(const IRSB* bb, const IRStmtVec* stmts,
    default:
       vassert(0);
    }
+}
+
+static void assignedOnce_IRPhi(const IRSB* bb, const IRStmtVec* stmts,
+                               const IRStmt* stmt, const IRPhi* phi,
+                               UInt* def_counts[])
+{
+   assignedOnce_Temp(bb, stmts, stmt, phi->dst, def_counts,
+      "IRStmt.IfThenElse.Phi: destination tmp is out of range",
+      "IRStmt.IfThenElse.Phi: destination tmp is out of scope",
+      "IRStmt.IfThenElse: destination tmp is assigned more than once");
 }
 
 static
@@ -4918,16 +4916,22 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
          tcExpr(bb, stmts, stmt, stmt->Ist.IfThenElse.cond, gWordTy);
          if (typeOfIRExpr(tyenv, stmt->Ist.IfThenElse.cond) != Ity_I1)
             sanityCheckFail(bb,stmt,"IRStmt.IfThenElse.cond: not :: Ity_I1");
-         /* Traversing into legs driven from sanityCheckIRStmtVec(). */
-         const IRPhiVec* phi_nodes = stmt->Ist.IfThenElse.phi_nodes;
-         if (phi_nodes != NULL) {
-            for (UInt i = 0; i < phi_nodes->phis_used; i++) {
-               tcPhi(bb, stmts, stmt, phi_nodes->phis[i]);
-            }
-         }
+         /* Traversing into legs and phi nodes driven from
+            sanityCheckIRStmtVec(). */
          break;
       default:
          vpanic("tcStmt");
+   }
+}
+
+static void sanityCheckIRPhiNodes(const IRSB* bb, const IRStmtVec* stmts,
+              const IRStmt* stmt, const IRPhiVec* phi_nodes, UInt *def_counts[])
+{
+   for (UInt i = 0; i < phi_nodes->phis_used; i++) {
+      const IRPhi* phi = phi_nodes->phis[i];
+      useBeforeDef_IRPhi(bb, stmts, stmt, phi, def_counts);
+      assignedOnce_IRPhi(bb, stmts, stmt, phi, def_counts);
+      tcPhi(bb, stmts, stmt, phi);
    }
 }
 
@@ -4997,10 +5001,32 @@ void sanityCheckIRStmtVec(const IRSB* bb, const IRStmtVec* stmts,
       tcStmt(bb, stmts, stmt, require_flat, gWordTy);
 
       if (stmt->tag == Ist_IfThenElse) {
-         sanityCheckIRStmtVec(bb, stmt->Ist.IfThenElse.then_leg, require_flat,
-                              def_counts, n_stmt_vecs, id_counts, gWordTy);
-         sanityCheckIRStmtVec(bb, stmt->Ist.IfThenElse.else_leg, require_flat,
-                              def_counts, n_stmt_vecs, id_counts, gWordTy);
+         const IRStmtVec* then_leg = stmt->Ist.IfThenElse.then_leg;
+         const IRStmtVec* else_leg = stmt->Ist.IfThenElse.else_leg;
+
+         if (then_leg->parent == NULL) {
+            sanityCheckFail(bb, stmt, "IfThenElse.then.parent is NULL");
+         }
+         if (else_leg->parent == NULL) {
+            sanityCheckFail(bb, stmt, "IfThenElse.else.parent is NULL");
+         }
+         if (then_leg->parent != stmts) {
+            sanityCheckFail(bb, stmt, "IfThenElse.then.parent does not point "
+                                      "to its parent");
+         }
+         if (else_leg->parent != stmts) {
+            sanityCheckFail(bb, stmt, "IfThenElse.else.parent does not point "
+                                      "to its parent");
+         }
+
+         sanityCheckIRStmtVec(bb, then_leg, require_flat, def_counts,
+                              n_stmt_vecs, id_counts, gWordTy);
+         sanityCheckIRStmtVec(bb, else_leg, require_flat, def_counts,
+                              n_stmt_vecs, id_counts, gWordTy);
+         if (stmt->Ist.IfThenElse.phi_nodes != NULL) {
+             sanityCheckIRPhiNodes(bb, stmts, stmt,
+                                   stmt->Ist.IfThenElse.phi_nodes, def_counts);
+         }
       }
    }
 }

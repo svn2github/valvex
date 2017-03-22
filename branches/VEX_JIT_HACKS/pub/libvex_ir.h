@@ -2826,7 +2826,8 @@ extern void ppIRStmtVec(const IRStmtVec*);
 /* Allocates an empty IRStmtVec with an invalid IRTyEnvID.
    Such an IRStmtVec needs to have a valid IRTyEnvId - get it from
    nextIRTyEnvID(). Only after this is done, then such an IRStmtVec is ready
-   for newIRTemp() to give out new temporaries. */
+   for newIRTemp() to give out new temporaries.
+   Nested IRStmtVec also needs to have correctly set its parent. */
 extern IRStmtVec* emptyIRStmtVec(void);
 
 extern IRStmtVec* deepCopyIRStmtVec(const IRStmtVec* src, IRStmtVec* parent);
