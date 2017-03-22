@@ -1579,17 +1579,30 @@ void ppIRPhi(const IRPhi* phi)
    vex_printf(")");
 }
 
-void ppIRPhiVec(const IRPhiVec* phis)
+static void print_depth(UInt depth) {
+   for (UInt i = 0; i < depth; i++) {
+      vex_printf("    ");
+   }
+}
+
+static void ppIRPhiVec_wrk(const IRPhiVec* phis, UInt depth)
 {
    for (UInt i = 0; i < phis->phis_used; i++) {
-      vex_printf("   ");
+      print_depth(depth);
       ppIRPhi(phis->phis[i]);
       vex_printf("\n");
    }
 }
 
-void ppIRStmt ( const IRStmt* s )
+void ppIRPhiVec(const IRPhiVec* phis)
 {
+   ppIRPhiVec_wrk(phis, 0);
+}
+
+void ppIRStmt_wrk(const IRStmt* s, UInt depth)
+{
+   print_depth(depth);
+
    if (!s) {
       vex_printf("!!! IRStmt* which is NULL !!!");
       return;
@@ -1674,13 +1687,15 @@ void ppIRStmt ( const IRStmt* s )
          vex_printf("if (");
          ppIRExpr(s->Ist.IfThenElse.cond);
          vex_printf(") then {\n");
-         ppIRStmtVec(s->Ist.IfThenElse.then_leg); // TODO-JIT: indent properly
+         ppIRStmtVec_wrk(s->Ist.IfThenElse.then_leg, depth + 1);
+         print_depth(depth);
          vex_printf("} else {\n");
-         ppIRStmtVec(s->Ist.IfThenElse.else_leg); // TODO-JIT: indent properly
+         ppIRStmtVec_wrk(s->Ist.IfThenElse.else_leg, depth + 1);
+         print_depth(depth);
          vex_printf("}\n");
          IRPhiVec* phi_nodes = s->Ist.IfThenElse.phi_nodes;
          if (phi_nodes != NULL) {
-            ppIRPhiVec(phi_nodes);
+            ppIRPhiVec_wrk(phi_nodes, depth);
          }
          break;
       default:
@@ -1688,11 +1703,16 @@ void ppIRStmt ( const IRStmt* s )
    }
 }
 
-void ppIRTypeEnv ( const IRTypeEnv* env )
+void ppIRStmt(const IRStmt* s)
+{
+   ppIRStmt_wrk(s, 0);
+}
+
+static void ppIRTypeEnv_wrk(const IRTypeEnv* env, UInt depth)
 {
    for (UInt i = 0; i < env->types_used; i++) {
       if (i % 8 == 0)
-         vex_printf( "   ");
+         print_depth(depth);
       IRTemp temp = mkIRTemp(env->id, i);
       ppIRTemp(temp);
       vex_printf("=");
@@ -1706,23 +1726,34 @@ void ppIRTypeEnv ( const IRTypeEnv* env )
       vex_printf( "\n"); 
 }
 
-/* TODO-JIT: account for indentation */
-void ppIRStmtVec(const IRStmtVec* stmts)
+void ppIRTypeEnv(const IRTypeEnv* env)
 {
-   ppIRTypeEnv(stmts->tyenv);
+   ppIRTypeEnv_wrk(env, 0);
+}
+
+void ppIRStmtVec_wrk(const IRStmtVec* stmts, UInt depth)
+{
+   ppIRTypeEnv_wrk(stmts->tyenv, depth);
    vex_printf("\n");
    for (UInt i = 0; i < stmts->stmts_used; i++) {
-      vex_printf( "   ");
-      ppIRStmt(stmts->stmts[i]);
+      ppIRStmt_wrk(stmts->stmts[i], depth);
       vex_printf("\n");
    }
 }
 
+void ppIRStmtVec(const IRStmtVec* stmts)
+{
+   ppIRStmtVec_wrk(stmts, 0);
+}
+
 void ppIRSB ( const IRSB* bb )
 {
+   UInt depth = 0;
+
    vex_printf("IRSB {\n");
-   ppIRStmtVec(bb->stmts);
-   vex_printf( "   PUT(%d) = ", bb->offsIP );
+   ppIRStmtVec_wrk(bb->stmts, depth + 1);
+   print_depth(depth + 1);
+   vex_printf("PUT(%d) = ", bb->offsIP);
    ppIRExpr( bb->next );
    vex_printf( "; exit-");
    ppIRJumpKind(bb->jumpkind);
@@ -4053,7 +4084,7 @@ void sanityCheckFail ( const IRSB* bb, const IRStmt* stmt, const HChar* what )
    ppIRSB(bb);
    if (stmt) {
       vex_printf("\nIN STATEMENT:\n\n");
-      ppIRStmt(stmt);
+      ppIRStmt_wrk(stmt, 1);
    }
    vex_printf("\n\nERROR = %s\n\n", what );
    vpanic("sanityCheckFail: exiting due to bad IR");

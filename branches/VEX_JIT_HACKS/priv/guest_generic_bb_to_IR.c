@@ -392,10 +392,9 @@ IRSB* bb_to_IR (
       imark->Ist.IMark.len = dres.len;
 
       /* Print the resulting IR, if needed. */
-      if (vex_traceflags & VEX_TRACE_FE) {
+      if (debug_print) {
          for (i = first_stmt_idx; i < irsb->stmts->stmts_used; i++) {
-            vex_printf("              ");
-            ppIRStmt(irsb->stmts->stmts[i]);
+            ppIRStmt_wrk(irsb->stmts->stmts[i], 3);
             vex_printf("\n");
          }
       }
@@ -753,7 +752,7 @@ IRSB* bb_to_IR (
       Print it if necessary.*/
    vassert(irsb->next != NULL);
    if (debug_print) {
-      vex_printf("              ");
+      vex_printf("            ");
       vex_printf( "PUT(%d) = ", irsb->offsIP);
       ppIRExpr( irsb->next );
       vex_printf( "; exit-");

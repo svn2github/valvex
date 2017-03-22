@@ -2715,8 +2715,7 @@ IRSB* mc_instrument ( void* closureV,
 
       if (verboze) {
          for (UInt j = first_stmt; j < bb->stmts->stmts_used; j++) {
-            VG_(printf)("   ");
-            ppIRStmt(bb->stmts->stmts[j]);
+            ppIRStmt_wrk(bb->stmts->stmts[j], 1);
             VG_(printf)("\n");
          }
          VG_(printf)("\n");
@@ -2739,8 +2738,7 @@ IRSB* mc_instrument ( void* closureV,
 
    if (verboze) {
       for (UInt j = first_stmt; j < bb->stmts->stmts_used; j++) {
-         VG_(printf)("   ");
-         ppIRStmt(bb->stmts->stmts[j]);
+         ppIRStmt_wrk(bb->stmts->stmts[j], 1);
          VG_(printf)("\n");
       }
       VG_(printf)("\n");

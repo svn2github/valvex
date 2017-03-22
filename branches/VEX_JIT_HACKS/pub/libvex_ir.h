@@ -2822,6 +2822,7 @@ typedef
    IRStmtVec;
 
 extern void ppIRStmtVec(const IRStmtVec*);
+extern void ppIRStmtVec_wrk(const IRStmtVec*, UInt depth);
 
 /* Allocates an empty IRStmtVec with an invalid IRTyEnvID.
    Such an IRStmtVec needs to have a valid IRTyEnvId - get it from
@@ -3155,6 +3156,7 @@ extern IRStmt* deepCopyIRStmt(const IRStmt* src, IRStmtVec* parent);
 
 /* Pretty-print an IRStmt. */
 extern void ppIRStmt ( const IRStmt* );
+extern void ppIRStmt_wrk(const IRStmt*, UInt depth);
 
 /* ------------------ Basic Blocks ------------------ */
 
