@@ -2828,7 +2828,9 @@ extern void ppIRStmtVec_wrk(const IRStmtVec*, UInt depth);
    Such an IRStmtVec needs to have a valid IRTyEnvId - get it from
    nextIRTyEnvID(). Only after this is done, then such an IRStmtVec is ready
    for newIRTemp() to give out new temporaries.
-   Nested IRStmtVec also needs to have correctly set its parent. */
+   Nested IRStmtVec also needs to have correctly set its parent.
+
+   Function addEmptyIfThenElse() can be used conveniently instead. */
 extern IRStmtVec* emptyIRStmtVec(void);
 
 extern IRStmtVec* deepCopyIRStmtVec(const IRStmtVec* src, IRStmtVec* parent);
@@ -3205,6 +3207,11 @@ extern void addStmtToIRSB ( IRSB*, IRStmt* ) __attribute__ ((deprecated));
 extern void addStmtToIRStmtVec(IRStmtVec*, IRStmt*);
 
 extern IRTyEnvID nextIRTyEnvID(IRSB*);
+
+/* Allocates an empty IfThenElse, assigns it a valid IRTyEnvID
+   and sets the parent for both then and else legs.
+   The returned IRStmt is added to the parent IRStmtVec and ready to be used. */
+extern IRStmt *addEmptyIfThenElse(IRSB* bb, IRStmtVec* parent, IRExpr* cond);
 
 /*---------------------------------------------------------------*/
 /*--- Helper functions for the IR                             ---*/

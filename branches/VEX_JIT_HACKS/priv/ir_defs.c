@@ -3798,15 +3798,16 @@ inline
 IRType typeOfIRTemp(const IRStmtVec* stmts, IRTemp tmp)
 {
    const IRTypeEnv* tyenv = stmts->tyenv;
-   if (tyenv->id == tmp.id) {
-      vassert(tmp.index >= 0);
-      vassert(tmp.index < tyenv->types_used);
-      return tyenv->types[tmp.index];
-   } else if (stmts->parent != NULL) {
-      return typeOfIRTemp(stmts->parent, tmp);
-   } else {
-      vpanic("typeOfIRTemp");
+   while (tyenv->id != tmp.id) {
+      stmts = stmts->parent;
+      vassert(stmts != NULL);
+      tyenv = stmts->tyenv;
    }
+
+   vassert(tyenv->id == tmp.id);
+   vassert(tmp.index >= 0);
+   vassert(tmp.index < tyenv->types_used);
+   return tyenv->types[tmp.index];
 }
 
 IRType typeOfIRConst ( const IRConst* con )
@@ -4154,13 +4155,16 @@ static Bool inScopeIRTemp(const IRStmtVec* stmts, IRTemp tmp)
 {
    vassert(tmp.id != IRTyEnvID_INVALID);
 
-   if (stmts->tyenv->id == tmp.id) {
-      return True;
+   const IRTypeEnv* tyenv = stmts->tyenv;
+   while (tyenv->id != tmp.id) {
+      stmts = stmts->parent;
+      if (stmts == NULL)
+         return False;
+      tyenv = stmts->tyenv;
    }
-   if (stmts->parent != NULL) {
-      return inScopeIRTemp(stmts->parent, tmp);
-   }
-   return False;
+
+   vassert(tyenv->id == tmp.id);
+   return True;
 }
 
 static
