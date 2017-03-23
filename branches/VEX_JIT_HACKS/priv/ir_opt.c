@@ -1064,8 +1064,62 @@ static UInt num_nodes_visited;
 #define NODE_LIMIT 30
 
 
-/* The env in this section is a map from IRTemp to IRExpr*,
-   that is, an array indexed by IRTemp. */
+/* The env in this section is a structure which holds:
+   - A map from IRTemp to IRExpr*, that is, an array indexed by IRTemp.
+     Keys are IRTemp.indices. Values are IRExpr*s.
+   - IRTypeEnv ID
+   - Current IRStmtVec* which is being constructed.
+   - A pointer to the parent env (or NULL). */
+typedef
+   struct _FoldEnv {
+      IRExpr**         map;
+      IRTyEnvID        id;
+      IRStmtVec*       stmts;
+      struct _FoldEnv* parent;
+   }
+   FoldEnv;
+
+/* Sets up the constant propagation and folding environment. */
+static FoldEnv* newFoldEnv(IRStmtVec* stmts_in, FoldEnv* parent_env)
+{
+   IRStmtVec* stmts_out = emptyIRStmtVec();
+   stmts_out->tyenv     = deepCopyIRTypeEnv(stmts_in->tyenv);
+   stmts_out->parent    = (parent_env != NULL) ? parent_env->stmts : NULL;
+
+   FoldEnv* env = LibVEX_Alloc_inline(sizeof(FoldEnv));
+   env->id      = stmts_out->tyenv->id;
+   env->stmts   = stmts_out;
+   env->parent  = parent_env;
+
+   UInt  n_tmps = stmts_out->tyenv->types_used;
+   env->map     = LibVEX_Alloc_inline(n_tmps * sizeof(IRExpr*));
+   for (UInt i = 0; i < n_tmps; i++)
+      env->map[i] = NULL;
+   return env;
+}
+
+static inline IRExpr* findIRExpr(const FoldEnv* env, IRTemp tmp)
+{
+   while (env->id != tmp.id) {
+      env = env->parent;
+      vassert(env != NULL);
+   }
+   vassert(env->id == tmp.id);
+
+   return env->map[tmp.index];
+}
+
+static void setIRExpr(FoldEnv* env, IRTemp tmp, IRExpr* e)
+{
+   while (env->id != tmp.id) {
+      env = env->parent;
+      vassert(env != NULL);
+   }
+   vassert(env->id == tmp.id);
+
+   vassert(env->map[tmp.index] == NULL);
+   env->map[tmp.index] = e;
+}
 
 /* Do both expressions compute the same value? The answer is generally
    conservative, i.e. it will report that the expressions do not compute
@@ -1084,17 +1138,20 @@ static UInt num_nodes_visited;
    slower out of line general case.  Saves a few insns. */
 
 __attribute__((noinline))
-static Bool sameIRExprs_aux2(IRExpr* env[], IRExpr* e1, IRExpr* e2);
+static Bool sameIRExprs_aux2(const FoldEnv* env, const IRExpr* e1,
+                             const IRExpr* e2);
 
 inline
-static Bool sameIRExprs_aux(IRExpr* env[], IRExpr* e1, IRExpr* e2)
+static Bool sameIRExprs_aux(const FoldEnv* env, const IRExpr* e1,
+                            const IRExpr* e2)
 {
    if (e1->tag != e2->tag) return False;
    return sameIRExprs_aux2(env, e1, e2);
 }
 
 __attribute__((noinline))
-static Bool sameIRExprs_aux2(IRExpr* env[], IRExpr* e1, IRExpr* e2)
+static Bool sameIRExprs_aux2(const FoldEnv* env, const IRExpr* e1,
+                             const IRExpr* e2)
 {
    if (num_nodes_visited++ > NODE_LIMIT) return False;
 
@@ -1102,12 +1159,12 @@ static Bool sameIRExprs_aux2(IRExpr* env[], IRExpr* e1, IRExpr* e2)
       case Iex_RdTmp: {
          IRTemp tmp1 = e1->Iex.RdTmp.tmp;
          IRTemp tmp2 = e2->Iex.RdTmp.tmp;
-         vassert(tmp1.id == tmp2.id);
 
-         if (tmp1.index == tmp2.index) return True;
-
-         if (env[tmp1.index] && env[tmp2.index]) {
-            Bool same = sameIRExprs_aux(env, env[tmp1.index], env[tmp2.index]);
+         if (eqIRTemp(tmp1, tmp2)) return True;
+         const IRExpr* subst1 = findIRExpr(env, tmp1);
+         const IRExpr* subst2 = findIRExpr(env, tmp2);
+         if (subst1 != NULL && subst2 != NULL) {
+            Bool same = sameIRExprs_aux(env, subst1, subst2);
 #if STATS_IROPT
             recursed = True;
             if (same) recursion_helped = True;
@@ -1176,7 +1233,7 @@ static Bool sameIRExprs_aux2(IRExpr* env[], IRExpr* e1, IRExpr* e2)
 }
 
 inline
-static Bool sameIRExprs(IRExpr* env[], IRExpr* e1, IRExpr* e2)
+static Bool sameIRExprs(const FoldEnv* env, const IRExpr* e1, const IRExpr* e2)
 {
    Bool same;
 
@@ -1205,8 +1262,8 @@ static Bool sameIRExprs(IRExpr* env[], IRExpr* e1, IRExpr* e2)
    --vex-iropt-level > 0, that is, vex_control.iropt_verbosity > 0.
    Bad because it duplicates functionality from typeOfIRExpr.  See
    comment on the single use point below for rationale. */
-static
-Bool debug_only_hack_sameIRExprs_might_assert ( IRExpr* e1, IRExpr* e2 )
+static Bool
+debug_only_hack_sameIRExprs_might_assert(const IRExpr* e1, const IRExpr* e2)
 {
    if (e1->tag != e2->tag) return False;
    switch (e1->tag) {
@@ -1224,7 +1281,7 @@ Bool debug_only_hack_sameIRExprs_might_assert ( IRExpr* e1, IRExpr* e2 )
 
 
 /* Is this literally IRExpr_Const(IRConst_U32(0)) ? */
-static Bool isZeroU32 ( IRExpr* e )
+static Bool isZeroU32(const IRExpr* e)
 {
    return toBool( e->tag == Iex_Const 
                   && e->Iex.Const.con->tag == Ico_U32
@@ -1234,7 +1291,7 @@ static Bool isZeroU32 ( IRExpr* e )
 /* Is this literally IRExpr_Const(IRConst_U64(0)) ?
    Currently unused; commented out to avoid compiler warning */
 #if 0
-static Bool isZeroU64 ( IRExpr* e )
+static Bool isZeroU64(const IRExpr* e)
 {
    return toBool( e->tag == Iex_Const 
                   && e->Iex.Const.con->tag == Ico_U64
@@ -1243,7 +1300,7 @@ static Bool isZeroU64 ( IRExpr* e )
 #endif
 
 /* Is this literally IRExpr_Const(IRConst_V128(0)) ? */
-static Bool isZeroV128 ( IRExpr* e )
+static Bool isZeroV128(const IRExpr* e)
 {
    return toBool( e->tag == Iex_Const 
                   && e->Iex.Const.con->tag == Ico_V128
@@ -1251,7 +1308,7 @@ static Bool isZeroV128 ( IRExpr* e )
 }
 
 /* Is this literally IRExpr_Const(IRConst_V256(0)) ? */
-static Bool isZeroV256 ( IRExpr* e )
+static Bool isZeroV256(const IRExpr* e)
 {
    return toBool( e->tag == Iex_Const 
                   && e->Iex.Const.con->tag == Ico_V256
@@ -1259,7 +1316,7 @@ static Bool isZeroV256 ( IRExpr* e )
 }
 
 /* Is this an integer constant with value 0 ? */
-static Bool isZeroU ( IRExpr* e )
+static Bool isZeroU(const IRExpr* e)
 {
    if (e->tag != Iex_Const) return False;
    switch (e->Iex.Const.con->tag) {
@@ -1274,7 +1331,7 @@ static Bool isZeroU ( IRExpr* e )
 }
 
 /* Is this an integer constant with value 1---1b ? */
-static Bool isOnesU ( IRExpr* e )
+static Bool isOnesU(const IRExpr* e)
 {
    if (e->tag != Iex_Const) return False;
    switch (e->Iex.Const.con->tag) {
@@ -1391,14 +1448,14 @@ static UInt fold_Clz32 ( UInt value )
    return NULL if it can't resolve 'e' to a new expression, which will
    be the case if 'e' is instead defined by an IRStmt (IRDirty or
    LLSC). */
-static IRExpr* chase(IRExpr* env[], IRExpr* e)
+static IRExpr* chase(FoldEnv* env, IRExpr* e)
 {
    /* Why is this loop guaranteed to terminate?  Because all tmps must
       have definitions before use, hence a tmp cannot be bound
       (directly or indirectly) to itself. */
    while (e->tag == Iex_RdTmp) {
       if (0) { vex_printf("chase "); ppIRExpr(e); vex_printf("\n"); }
-      e = env[e->Iex.RdTmp.tmp.index];
+      e = findIRExpr(env, e->Iex.RdTmp.tmp);
       if (e == NULL) break;
    }
    return e;
@@ -1413,7 +1470,7 @@ static IRExpr* chase1(IRExpr* env[], IRExpr* e)
       return env[e->Iex.RdTmp.tmp.index];
 }
 
-static IRExpr* fold_Expr(IRExpr* env[], IRExpr* e)
+static IRExpr* fold_Expr(FoldEnv* env, IRExpr* e)
 {
    Int     shift;
    IRExpr* e2 = e; /* e2 is the result of folding e, if possible */
@@ -2473,13 +2530,12 @@ static IRExpr* fold_Expr(IRExpr* env[], IRExpr* e)
 
 /* Apply the subst to a simple 1-level expression -- guaranteed to be
    1-level due to previous flattening pass. */
-
-static IRExpr* subst_Expr(IRExpr* env[], IRExpr* ex)
+static IRExpr* subst_Expr(FoldEnv* env, IRExpr* ex)
 {
    switch (ex->tag) {
-      case Iex_RdTmp:
-         if (env[ex->Iex.RdTmp.tmp.index] != NULL) {
-            IRExpr *rhs = env[ex->Iex.RdTmp.tmp.index];
+      case Iex_RdTmp: {
+         IRExpr* rhs = findIRExpr(env, ex->Iex.RdTmp.tmp);
+         if (rhs != NULL) {
             if (rhs->tag == Iex_RdTmp)
                return rhs;
             if (rhs->tag == Iex_Const
@@ -2488,6 +2544,7 @@ static IRExpr* subst_Expr(IRExpr* env[], IRExpr* ex)
          }
          /* not bound in env */
          return ex;
+      }
 
       case Iex_Const:
       case Iex_Get:
@@ -2584,27 +2641,13 @@ static IRExpr* subst_Expr(IRExpr* env[], IRExpr* ex)
    }
 }
 
-/* Set up the cprop env with which travels forward for the current IRStmtVec.
-   This holds a substitution, mapping IRTemp.indices to IRExprs.
-   Keys are IRTemp.indices. Values are IRExpr*s.
-*/
-static IRExpr** new_cprop_env(const IRTypeEnv* tyenv)
-{
-   UInt  n_tmps = tyenv->types_used;
-   IRExpr** env = LibVEX_Alloc_inline(n_tmps * sizeof(IRExpr*));
-   for (UInt i = 0; i < n_tmps; i++)
-      env[i] = NULL;
-   return env;
-}
-
-static IRStmtVec* subst_and_fold_Stmts(IRExpr* env[], IRStmtVec* in,
-                                       IRStmtVec* parent);
+static IRStmtVec* subst_and_fold_Stmts(FoldEnv* env, IRStmtVec* in);
 
 /* Apply the subst to stmt, then fold the result as much as possible.
    Much simplified due to stmt being previously flattened.  As a
    result of this, the stmt may wind up being turned into a no-op.  
 */
-static IRStmt* subst_and_fold_Stmt(IRExpr* env[], IRStmt* st, IRStmtVec* parent)
+static IRStmt* subst_and_fold_Stmt(FoldEnv* env, IRStmt* st)
 {
 #  if 0
    vex_printf("\nsubst and fold stmt\n");
@@ -2832,16 +2875,17 @@ static IRStmt* subst_and_fold_Stmt(IRExpr* env[], IRStmt* st, IRStmtVec* parent)
                It is necessary to rewrite indices of all IRTemp's in scope.
                Not sure if this is possible or feasible. */
          }
-         return IRStmt_IfThenElse(fcond,
-                      subst_and_fold_Stmts(
-                         new_cprop_env(st->Ist.IfThenElse.then_leg->tyenv),
-                         st->Ist.IfThenElse.then_leg,
-                         parent),
-                      subst_and_fold_Stmts(
-                         new_cprop_env(st->Ist.IfThenElse.then_leg->tyenv),
-                         st->Ist.IfThenElse.else_leg,
-                         parent),
-                      st->Ist.IfThenElse.phi_nodes);
+
+         FoldEnv* then_env = newFoldEnv(st->Ist.IfThenElse.then_leg, env);
+         IRStmtVec* then_stmts = subst_and_fold_Stmts(then_env,
+                                                   st->Ist.IfThenElse.then_leg);
+
+         FoldEnv* else_env = newFoldEnv(st->Ist.IfThenElse.else_leg, env);
+         IRStmtVec* else_stmts = subst_and_fold_Stmts(else_env,
+                                                   st->Ist.IfThenElse.else_leg);
+
+         return IRStmt_IfThenElse(fcond, then_stmts, else_stmts,
+                                  st->Ist.IfThenElse.phi_nodes);
       }
 
    default:
@@ -2850,8 +2894,8 @@ static IRStmt* subst_and_fold_Stmt(IRExpr* env[], IRStmt* st, IRStmtVec* parent)
    }
 }
 
-static
-IRStmtVec* subst_and_fold_Stmts(IRExpr* env[], IRStmtVec* in, IRStmtVec* parent)
+/* Is to be called with already created FoldEnv as per newFoldEnv(). */
+static IRStmtVec* subst_and_fold_Stmts(FoldEnv* env, IRStmtVec* in)
 {
    /* Keep track of IRStmt_LoadGs that we need to revisit after
       processing all the other statements. */
@@ -2859,9 +2903,7 @@ IRStmtVec* subst_and_fold_Stmts(IRExpr* env[], IRStmtVec* in, IRStmtVec* parent)
    Int fixups[N_FIXUPS]; /* indices in the stmt array of 'out' */
    Int n_fixups = 0;
 
-   IRStmtVec* out = emptyIRStmtVec();
-   out->tyenv     = deepCopyIRTypeEnv( in->tyenv );
-   out->parent    = parent;
+   IRStmtVec* out = env->stmts;
 
    /* For each original SSA-form stmt ... */
    for (UInt i = 0; i < in->stmts_used; i++) {
@@ -2876,7 +2918,7 @@ IRStmtVec* subst_and_fold_Stmts(IRExpr* env[], IRStmtVec* in, IRStmtVec* parent)
       /* perhaps st2 is already a no-op? */
       if (st2->tag == Ist_NoOp) continue;
 
-      st2 = subst_and_fold_Stmt(env, st2, out);
+      st2 = subst_and_fold_Stmt(env, st2);
 
       /* Deal with some post-folding special cases. */
       switch (st2->tag) {
@@ -2891,8 +2933,7 @@ IRStmtVec* subst_and_fold_Stmts(IRExpr* env[], IRStmtVec* in, IRStmtVec* parent)
             propagation and to allow sameIRExpr look through
             IRTemps. */
          case Ist_WrTmp: {
-            vassert(env[st2->Ist.WrTmp.tmp.index] == NULL);
-            env[st2->Ist.WrTmp.tmp.index] = st2->Ist.WrTmp.data;
+            setIRExpr(env, st2->Ist.WrTmp.tmp, st2->Ist.WrTmp.data);
 
             /* 't1 = t2' -- don't add to BB; will be optimized out */
             if (st2->Ist.WrTmp.data->tag == Iex_RdTmp)
@@ -2993,9 +3034,10 @@ IRStmtVec* subst_and_fold_Stmts(IRExpr* env[], IRStmtVec* in, IRStmtVec* parent)
 
 IRSB* cprop_BB ( IRSB* in )
 {
-   IRExpr** env  = new_cprop_env(in->stmts->tyenv);
+   FoldEnv* env  = newFoldEnv(in->stmts, NULL);
    IRSB* out     = emptyIRSB();
-   out->stmts    = subst_and_fold_Stmts(env, in->stmts, NULL);
+   out->stmts    = subst_and_fold_Stmts(env, in->stmts);
+   out->id_seq   = in->id_seq;
    out->next     = subst_Expr( env, in->next );
    out->jumpkind = in->jumpkind;
    out->offsIP   = in->offsIP;
@@ -6247,7 +6289,7 @@ static void print_flat_expr ( IRExpr** env, IRExpr* e )
       case Iex_RdTmp:
          ppIRTemp(e->Iex.RdTmp.tmp);
          vex_printf("=");
-         print_flat_expr(env, chase(env, e));
+         print_flat_expr(env, chase1(env, e));
          break;
       case Iex_Const:
       case Iex_CCall:
