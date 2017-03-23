@@ -32374,8 +32374,7 @@ DisResult disInstr_AMD64 ( IRSB*        irsb_IN,
                                   callback_opaque,
                                   delta, archinfo, abiinfo, sigill_diag_IN );
       for (i = x1; i < x2; i++) {
-         vex_printf("\t\t");
-         ppIRStmt(irsb_IN->stmts[i]);
+         ppIRStmt_wrk(irsb_IN->stmts[i], 4);
          vex_printf("\n");
       }
       /* Failure of this assertion is serious and denotes a bug in
