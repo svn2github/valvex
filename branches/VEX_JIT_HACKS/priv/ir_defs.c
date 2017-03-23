@@ -1693,10 +1693,7 @@ void ppIRStmt_wrk(const IRStmt* s, UInt depth)
          ppIRStmtVec_wrk(s->Ist.IfThenElse.else_leg, depth + 1);
          print_depth(depth);
          vex_printf("}\n");
-         IRPhiVec* phi_nodes = s->Ist.IfThenElse.phi_nodes;
-         if (phi_nodes != NULL) {
-            ppIRPhiVec_wrk(phi_nodes, depth);
-         }
+         ppIRPhiVec_wrk(s->Ist.IfThenElse.phi_nodes, depth);
          break;
       default:
          vpanic("ppIRStmt");
@@ -3747,6 +3744,20 @@ void addStmtToIRSB ( IRSB* bb, IRStmt* st )
    addStmtToIRStmtVec(bb->stmts, st);
 }
 
+IRStmt *addEmptyIfThenElse(IRSB* bb, IRStmtVec* parent, IRExpr* cond)
+{
+   IRStmtVec* then_leg = emptyIRStmtVec();
+   then_leg->tyenv->id = nextIRTyEnvID(bb);
+   then_leg->parent    = parent;
+
+   IRStmtVec* else_leg = emptyIRStmtVec();
+   else_leg->tyenv->id = nextIRTyEnvID(bb);
+   else_leg->parent    = parent;
+
+   IRStmt* st = IRStmt_IfThenElse(cond, then_leg, else_leg, emptyIRPhiVec());
+   addStmtToIRStmtVec(parent, st);
+   return st;
+}
 
 /*---------------------------------------------------------------*/
 /*--- Helper functions for the IR -- IR Type Environments     ---*/
@@ -5062,10 +5073,8 @@ void sanityCheckIRStmtVec(const IRSB* bb, const IRStmtVec* stmts,
                               n_stmt_vecs, id_counts, gWordTy);
          sanityCheckIRStmtVec(bb, else_leg, require_flat, def_counts,
                               n_stmt_vecs, id_counts, gWordTy);
-         if (stmt->Ist.IfThenElse.phi_nodes != NULL) {
-             sanityCheckIRPhiNodes(bb, stmts, stmt,
-                                   stmt->Ist.IfThenElse.phi_nodes, def_counts);
-         }
+         sanityCheckIRPhiNodes(bb, stmts, stmt,
+                               stmt->Ist.IfThenElse.phi_nodes, def_counts);
       }
    }
 }

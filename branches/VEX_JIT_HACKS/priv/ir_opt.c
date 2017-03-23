@@ -3166,12 +3166,10 @@ static void addUses_Stmt ( Bool* set, IRStmt* st )
          Bool* else_set = new_deadcode_set(st->Ist.IfThenElse.then_leg->tyenv);
 
          IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
-         if (phi_nodes != NULL) {
-            for (UInt i = 0; i < phi_nodes->phis_used; i++) {
-               const IRPhi* phi = phi_nodes->phis[i];
-               addUses_Temp(then_set, phi->srcThen);
-               addUses_Temp(else_set, phi->srcElse);
-            }
+         for (UInt i = 0; i < phi_nodes->phis_used; i++) {
+            const IRPhi* phi = phi_nodes->phis[i];
+            addUses_Temp(then_set, phi->srcThen);
+            addUses_Temp(else_set, phi->srcElse);
          }
 
          Int i_unconditional_exit; // TODO-JIT: unused at the moment
@@ -4852,10 +4850,8 @@ static void deltaIRStmt(IRStmt* st, Int delta, IRTyEnvID id)
          deltaIRStmtVec(st->Ist.IfThenElse.else_leg, delta, id);
 
          IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
-         if (phi_nodes != NULL) {
-            for (UInt i = 0; i < phi_nodes->phis_used; i++) {
-               deltaIRTemp(&phi_nodes->phis[i]->dst, delta, id);
-            }
+         for (UInt i = 0; i < phi_nodes->phis_used; i++) {
+            deltaIRTemp(&phi_nodes->phis[i]->dst, delta, id);
          }
          break;
       }
@@ -5409,10 +5405,8 @@ static void aoccCount_Stmt ( UShort* uses, IRStmt* st )
       case Ist_IfThenElse: {
          aoccCount_Expr(uses, st->Ist.IfThenElse.cond);
          IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
-         if (phi_nodes != NULL) {
-            for (UInt i = 0; i < phi_nodes->phis_used; i++) {
-               uses[phi_nodes->phis[i]->dst.index]++;
-            }
+         for (UInt i = 0; i < phi_nodes->phis_used; i++) {
+            uses[phi_nodes->phis[i]->dst.index]++;
          }
          return;
       }
@@ -6177,14 +6171,12 @@ static void deconstruct_phi_nodes_IRStmtVec(IRStmtVec* stmts)
       IRStmtVec* then_leg = st->Ist.IfThenElse.then_leg;
       IRStmtVec* else_leg = st->Ist.IfThenElse.else_leg;
       IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
-      if (phi_nodes != NULL) {
-         for (UInt j = 0; j < phi_nodes->phis_used; j++) {
-            IRPhi* phi = phi_nodes->phis[j];
-            addStmtToIRStmtVec(then_leg, IRStmt_WrTmp(phi->dst,
-                                               IRExpr_RdTmp(phi->srcThen)));
-            addStmtToIRStmtVec(else_leg, IRStmt_WrTmp(phi->dst,
-                                               IRExpr_RdTmp(phi->srcElse)));
-         }
+      for (UInt j = 0; j < phi_nodes->phis_used; j++) {
+         IRPhi* phi = phi_nodes->phis[j];
+         addStmtToIRStmtVec(then_leg, IRStmt_WrTmp(phi->dst,
+                                                   IRExpr_RdTmp(phi->srcThen)));
+         addStmtToIRStmtVec(else_leg, IRStmt_WrTmp(phi->dst,
+                                                   IRExpr_RdTmp(phi->srcElse)));
       }
 
       deconstruct_phi_nodes_IRStmtVec(then_leg);
