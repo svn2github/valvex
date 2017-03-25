@@ -54,13 +54,13 @@
    'IRSB').  Each code block typically represents from 1 to perhaps 50
    instructions.  IRSBs are single-entry, multiple-exit code blocks.
    Each IRSB contains three things:
-   - a vector of statements, which represent code, together with the associated
-     type environment (which indicates the type of each temporary value present
-     in statements)
+   - a type environment, which indicates the type of each temporary
+     value present in the IRSB
+   - a vector of statements, which represent code
    - a jump that exits from the end of the IRSB
    Flow control can leave the IRSB before the final exit only in a leg of an
-   "if-then-else" statement. A leg of an "if-then-else" statement is de facto
-   another vector of statements and as such has also its type environment.
+   "if-then-else" statement. A leg of an "if-then-else" statement is just
+   another vector of statements.
    "If-then-else" statements can be nested, however this is currently not
    supported.
    IRSBs can cover multiple non-consecutive sequences of code (up to 3).
@@ -107,10 +107,10 @@
    One Vex IR translation for this code would be this:
 
      ------ IMark(0x24F275, 7, 0) ------
-     t0:3 = GET:I32(0)           # get %eax, a 32-bit integer
-     t0:2 = GET:I32(12)          # get %ebx, a 32-bit integer
-     t0:1 = Add32(t0:3,t0:2)     # addl
-     PUT(0) = t1:1               # put %eax
+     t3 = GET:I32(0)             # get %eax, a 32-bit integer
+     t2 = GET:I32(12)            # get %ebx, a 32-bit integer
+     t1 = Add32(t3,t2)           # addl
+     PUT(0) = t1                 # put %eax
 
    (For simplicity, this ignores the effects on the condition codes, and
    the update of the instruction pointer.)
@@ -124,7 +124,7 @@
 
    The five statements in this example are:
    - the IMark
-   - three assignments to temporaries (they all belong to type environment ID 0)
+   - three assignments to temporaries
    - one register write (put)
 
    The six expressions in this example are:
@@ -150,11 +150,11 @@
    updates):
 
      ------ IMark(0x4000ABA, 3, 0) ------
-     t0:3 = Add32(GET:I32(0),0x4:I32)
-     t0:2 = LDle:I32(t0:3)
-     t0:1 = GET:I32(8)
-     t0:0 = Add32(t0:2,t0:1)
-     STle(t0:3) = t0:0
+     t3 = Add32(GET:I32(0),0x4:I32)
+     t2 = LDle:I32(t3)
+     t1 = GET:I32(8)
+     t0 = Add32(t2,t1)
+     STle(t3) = t0
 
    The "le" in "LDle" and "STle" is short for "little-endian".
 
@@ -391,51 +391,17 @@ extern Bool eqIRRegArray ( const IRRegArray*, const IRRegArray* );
 
 /* ------------------ Temporaries ------------------ */
 
-/* These represent IR SSA temporaries. A temporary is uniquely identified by its
-   type environment id and local index, such as (3, 1). Such a temporary belongs
-   to type environment id 3 and its local index within this type environment
-   is 1. Shorter representation would be t3:1.
+/* This represents a temporary, eg. t1.  The IR optimiser relies on the
+   fact that IRTemps are 32-bit ints.  Do not change them to be ints of
+   any other size. */
 
-   The IR optimiser relies on the fact that IRTemps are 32-bit ints (16 bits for
-   type environment id and 16 bits for local index). Do not change them to
-   be ints of any other size. */
-
-typedef UShort IRTyEnvID;
-typedef UShort IRTyEnvIndex;
-
-#define IRTyEnvID_INVALID    ((IRTyEnvID)    0xFFFF)
-#define IRTyEnvIndex_INVALID ((IRTyEnvIndex) 0xFFFF)
-
-typedef
-   struct {
-      IRTyEnvID    id;
-      IRTyEnvIndex index;
-   }
-   IRTemp;
-
-static inline IRTemp mkIRTemp(IRTyEnvID id, IRTyEnvIndex index)
-{
-   IRTemp tmp = {id, index};
-   return tmp;
-}
-
-static inline IRTemp IRTemp_INVALID(void)
-{
-   return mkIRTemp(IRTyEnvID_INVALID, IRTyEnvIndex_INVALID);
-}
+typedef UInt IRTemp;
 
 /* Pretty-print an IRTemp. */
 extern void ppIRTemp ( IRTemp );
 
-static inline Bool isIRTempInvalid(IRTemp tmp)
-{
-   return (tmp.id == IRTyEnvID_INVALID && tmp.index == IRTyEnvIndex_INVALID);
-}
+#define IRTemp_INVALID ((IRTemp) 0xFFFFFFFF)
 
-static inline Bool eqIRTemp(IRTemp t1, IRTemp t2)
-{
-   return toBool(t1.id == t2.id && t1.index == t2.index);
-}
 
 /* --------------- Primops (arity 1,2,3 and 4) --------------- */
 
@@ -2730,18 +2696,18 @@ extern IRLoadG* mkIRLoadG ( IREndness end, IRLoadGOp cvt,
    A "phi" function is special "phony" function that does not have its
    corresponding machine operation. Let's consider this example:
       if (cond) {
-         t0:1 = 3
+         t1 = 0x3:I64
       } else {
-         t0:1 = 4
+         t1 = 0x4:I64
       }
    However this is not possible under SSA rules (a temporary cannot be assigned
    more than once). Now the "phi" function comes handy:
       if (cond) {
-         t1:1 = 3
+         t2 = 0x3:I64
       } else {
-         t2:1 = 4
+         t3 = 0x4:I64
       }
-      t0:1 = phi(t1:1,t2:1)
+      t1 = phi(t2,t3)
 */
 typedef
    struct {
@@ -2768,33 +2734,47 @@ extern IRPhiVec* deepCopyIRPhiVec(const IRPhiVec*);
 
 extern void addIRPhiToIRPhiVec(IRPhiVec* , IRPhi*);
 
+/* ----------------- IRTemp Defined Set ----------------- */
 
-/* ------------------ Type Environments ------------------ */
+/* An IRTemp is defined in an IRStmtVec. By keeping track of where every IRTemp
+   is defined, it is possible to reason about IRTemp's scope.
 
-/* Type environments: a bunch of statements, expressions, etc, are incomplete
-   without an environment indicating the type of each IRTemp. So this provides
-   one. The array, 0 .. n_types_used-1, is indexed by "local index" component
-   of IR temporaries. The type environment ID is used to uniquely identify
-   temporaries across multiple IRStmtVec in an IRSB.
-*/
+   Let's have this IRStmtVec hierarchy:
+   IRSB
+      |- IRStmtVec #0
+         |- IRStmtVec #1
+         |- IRStmtVec #2
+            |- IRStmtVec #3
+   So an IRTemp defined in IRStmtVec #2 is valid (in scope) only
+   in IRStmtVec's #2 and #3; and out of scope in IRStmtVec's #0 and #1.
+
+   Every IRStmtVec has its IRTempDefSet structure. This is a bit set indexed
+   by IRTemp; value 1 means that a particular IRTemp is defined there.
+
+   'bits' array does not grow each time an IRTemp is added to IRSB; it grows
+   lazily only when an IRTemp is marked as defined in a particular IRStmtVec.
+ */
 typedef
    struct {
-      IRType*   types;
-      Int       types_size;
-      Int       types_used;
-      IRTyEnvID id;
+      UChar* set;       // a bit set, use isIRTempDefined() for access
+      UInt   slots_used;
+      UInt   slots_size;
    }
-   IRTypeEnv;
+   IRTempDefSet;
 
-/* Obtain a new IRTemp */
-extern IRTemp newIRTemp(IRTypeEnv*, IRType);
+static inline Bool isIRTempDefined(const IRTempDefSet* defd, IRTemp tmp)
+{
+   if (tmp / sizeof(UChar) < defd->slots_size) {
+      UInt mask = (1 << (tmp % sizeof(UChar)));
+      return toBool(defd->set[tmp / sizeof(UChar)] & mask);
+   }
+   return False;
+}
 
-/* Deep-copy a type environment */
-extern IRTypeEnv* deepCopyIRTypeEnv(const IRTypeEnv* src);
-
-/* Pretty-print a type environment */
-extern void ppIRTypeEnv(const IRTypeEnv*);
-
+extern void setIRTempDefined(IRTempDefSet* defd, IRTemp tmp);
+extern void ppIRTempDefSet(const IRTempDefSet* defd);
+extern IRTempDefSet* emptyIRTempDefSet(void);
+extern IRTempDefSet* deepCopyIRTempDefSet(const IRTempDefSet* defd);
 
 /* ------------------ Statements ------------------ */
 
@@ -2803,30 +2783,36 @@ typedef
    struct _IRStmt
    IRStmt;
 
+/* Uniquely identifies IRStmtVec in an IRSB, no matter how deeply nested. */
+typedef UShort IRStmtVecID;
+
+#define IRStmtVecID_INVALID ((IRStmtVecID) 0xFFFF)
+
 /* Vector of statements which contains:
-   - Type environment
-   - Statements
-   - A unique IRTyEnvID
+   - Statements themselves
+   - A unique IRStmtVecID
    - Parent, which points to the parent IRStmtVec. Because "if-then-else"
      statements cannot be currently nested, the parent is either NULL or points
-     to IRStmtVec with type environment ID #0.
+     to IRStmtVec #0.
+   - A set which keeps track of which IRTemp's are defined in this IRStmtVec.
 */
 typedef
    struct _IRStmtVec {
-      IRTypeEnv*         tyenv;
       IRStmt**           stmts;
       UInt               stmts_size;
       UInt               stmts_used;
+      IRStmtVecID        id;
       struct _IRStmtVec* parent;
+      IRTempDefSet*      def_set;
    }
    IRStmtVec;
 
 extern void ppIRStmtVec(const IRStmtVec*);
 extern void ppIRStmtVec_wrk(const IRStmtVec*, UInt depth);
 
-/* Allocates an empty IRStmtVec with an invalid IRTyEnvID.
-   Such an IRStmtVec needs to have a valid IRTyEnvId - get it from
-   nextIRTyEnvID(). Only after this is done, then such an IRStmtVec is ready
+/* Allocates an empty IRStmtVec with an invalid IRStmtVecID.
+   Such an IRStmtVec needs to have a valid IRStmtVecID - get it from
+   nextIRStmtVecID(). Only after this is done, then such an IRStmtVec is ready
    for newIRTemp() to give out new temporaries.
    Nested IRStmtVec also needs to have correctly set its parent.
 
@@ -2927,7 +2913,7 @@ struct _IRStmt {
          to help Memcheck to origin tracking.
 
          ppIRStmt output: ====== AbiHint(<base>, <len>, <nia>) ======
-                      eg. ====== AbiHint(t1:7, 16, t1:2) ======
+                      eg. ====== AbiHint(t1, 16, t2) ======
       */
       struct {
          IRExpr* base;     /* Start  of undefined chunk */
@@ -2936,7 +2922,7 @@ struct _IRStmt {
       } AbiHint;
 
       /* Write a guest register, at a fixed offset in the guest state.
-         ppIRStmt output: PUT(<offset>) = <data>, eg. PUT(60) = t1:7
+         ppIRStmt output: PUT(<offset>) = <data>, eg. PUT(60) = t1
       */
       struct {
          Int     offset;   /* Offset into the guest state */
@@ -2948,7 +2934,7 @@ struct _IRStmt {
          information.
 
          ppIRStmt output: PUTI<descr>[<ix>,<bias>] = <data>,
-                      eg. PUTI(64:8xF64)[t5,0] = t1:7
+                      eg. PUTI(64:8xF64)[t5,0] = t1
       */
       struct {
          IRPutI* details;
@@ -2959,7 +2945,7 @@ struct _IRStmt {
          reject any block containing a temporary which is not assigned
          to exactly once.
 
-         ppIRStmt output: t<tmp> = <data>, eg. t1:7 = 3
+         ppIRStmt output: t<tmp> = <data>, eg. t1 = 3
       */
       struct {
          IRTemp  tmp;   /* Temporary  (LHS of assignment) */
@@ -2969,7 +2955,7 @@ struct _IRStmt {
       /* Write a value to memory.  This is a normal store, not a
          Store-Conditional.  To represent a Store-Conditional,
          instead use IRStmt.LLSC.
-         ppIRStmt output: ST<end>(<addr>) = <data>, eg. STle(t1:7) = t1:6
+         ppIRStmt output: ST<end>(<addr>) = <data>, eg. STle(t1) = t2
       */
       struct {
          IREndness end;    /* Endianness of the store */
@@ -3001,7 +2987,7 @@ struct _IRStmt {
          ppIRStmt output:
             t<tmp> = CAS<end>(<addr> :: <expected> -> <new>)
          eg
-            t0:1 = CASle(t0:2 :: t0:3->Add32(t0:3,1))
+            t1 = CASle(t2 :: t3->Add32(t3,1))
             which denotes a 32-bit atomic increment 
             of a value at address t2
 
@@ -3026,7 +3012,7 @@ struct _IRStmt {
          The data transfer type is the type of RESULT (I32, I64,
          etc).  ppIRStmt output:
 
-            result = LD<end>-Linked(<addr>), eg. LDbe-Linked(t1:7)
+            result = LD<end>-Linked(<addr>), eg. LDbe-Linked(t1)
 
          If STOREDATA is not NULL then this is a Store-Conditional,
          hence:
@@ -3040,7 +3026,7 @@ struct _IRStmt {
          if it fails.  eg ppIRStmt output:
 
             result = ( ST<end>-Cond(<addr>) = <storedata> )
-            eg t3 = ( STbe-Cond(t1:1, t1:2) )
+            eg t3 = ( STbe-Cond(t1, t2) )
 
          In all cases, the address must be naturally aligned for
          the transfer type -- any misaligned addresses should be
@@ -3073,7 +3059,7 @@ struct _IRStmt {
                ::: <callee>(<args>)
          eg.
             t1 = DIRTY t27 RdFX-gst(16,4) RdFX-gst(60,4)
-                  ::: foo{0x380035f4}(t1:2)
+                  ::: foo{0x380035f4}(t2)
       */       
       struct {
          IRDirty* details;
@@ -3107,8 +3093,7 @@ struct _IRStmt {
 
       /* If-Then-Else control flow diamond. It contains:
          - Guard controling whether "then" or "else" leg is taken
-         - "then" and "else" legs with vectors of statements, together
-            with their associated type environments
+         - "then" and "else" legs with vectors of statements
             At the moment, nested "if-then-else" statements are not supported.
          - Phi nodes, which are used to merge temporaries from "then" and
            "else" legs
@@ -3119,7 +3104,7 @@ struct _IRStmt {
 
          ppIRIfThenElse output:
               if (<cond>) then { <IRStmtVec> } else { <IRStmtVec> }
-          eg. if (t0:3) then { <then-statements> } else { <else-statements> }
+          eg. if (t3) then { <then-statements> } else { <else-statements> }
       */
       struct {
          IRExpr*    cond;
@@ -3160,13 +3145,43 @@ extern IRStmt* deepCopyIRStmt(const IRStmt* src, IRStmtVec* parent);
 extern void ppIRStmt ( const IRStmt* );
 extern void ppIRStmt_wrk(const IRStmt*, UInt depth);
 
+
 /* ------------------ Basic Blocks ------------------ */
+
+/* Type environments: a bunch of statements, expressions, etc, are incomplete
+   without an environment indicating the type of each IRTemp and its scope.
+   So this provides one. IR temporaries are really just unsigned ints so they
+   can used to index these two arrays:
+   - 'types' which gives IRTemp's type
+   - 'ids' which gives ID of the defining IRStmtVec
+*/
+
+typedef
+   struct {
+      IRType*      types;
+      IRStmtVecID* ids;
+      UInt         size;
+      UInt         used;
+   }
+   IRTypeEnv;
+
+/* Obtain a new IRTemp. New IRTemp is allocated from 'tyenv' and is marked
+   as defined in 'stmts'->def_set. */
+extern IRTemp newIRTemp(IRTypeEnv* tyenv, IRStmtVec* stmts, IRType);
+
+/* Deep-copy a type environment */
+extern IRTypeEnv* deepCopyIRTypeEnv ( const IRTypeEnv* );
+
+/* Pretty-print a type environment */
+extern void ppIRTypeEnv ( const IRTypeEnv* );
+
 
 /* Code blocks, which in proper compiler terminology are superblocks
    (single entry, multiple exit code sequences) contain:
 
-   - A vector of statements, together with its type environment
-   - A sequence used to get a unique IRTyEnvID for nested IRStmtVec's
+   - A type environment (giving type for each temp and where it is defined)
+   - A vector of statements
+   - A sequence used to get a unique IRStmtVecID for nested IRStmtVec's
    - An expression of type 32 or 64 bits, depending on the
      guest's word size, indicating the next destination if the block 
      executes all the way to the end, without a side exit
@@ -3179,15 +3194,16 @@ extern void ppIRStmt_wrk(const IRStmt*, UInt depth);
 */
 typedef
    struct {
-      IRStmtVec* stmts;
-      IRTyEnvID  id_seq;
-      IRExpr*    next;
-      IRJumpKind jumpkind;
-      Int        offsIP;
+      IRTypeEnv*  tyenv;
+      IRStmtVec*  stmts;
+      IRStmtVecID id_seq;
+      IRExpr*     next;
+      IRJumpKind  jumpkind;
+      Int         offsIP;
    }
    IRSB;
 
-/* Allocates an empty IRSB. The corresponding type environment has ID #0. */
+/* Allocates an empty IRSB. The corresponding IRStmtVec has ID #0. */
 extern IRSB* emptyIRSB ( void );
 
 /* Deep-copy an IRSB */
@@ -3206,9 +3222,9 @@ extern void addStmtToIRSB ( IRSB*, IRStmt* ) __attribute__ ((deprecated));
 
 extern void addStmtToIRStmtVec(IRStmtVec*, IRStmt*);
 
-extern IRTyEnvID nextIRTyEnvID(IRSB*);
+extern IRStmtVecID nextIRStmtVecID(IRSB*);
 
-/* Allocates an empty IfThenElse, assigns it a valid IRTyEnvID
+/* Allocates an empty IfThenElse, assigns it a valid IRStmtVecID
    and sets the parent for both then and else legs.
    The returned IRStmt is added to the parent IRStmtVec and ready to be used. */
 extern IRStmt *addEmptyIfThenElse(IRSB* bb, IRStmtVec* parent, IRExpr* cond);
@@ -3217,15 +3233,10 @@ extern IRStmt *addEmptyIfThenElse(IRSB* bb, IRStmtVec* parent, IRExpr* cond);
 /*--- Helper functions for the IR                             ---*/
 /*---------------------------------------------------------------*/
 
-/* Creates a new IR type environment with an invalid IRTyEnvID.
-   Consult nextIRTyEnvID() function for getting a valid IRTyEnvID.
-   Useful for messing with IR type environments. */
-extern IRTypeEnv *emptyIRTypeEnv(void);
-
 /* What is the type of this expression? */
 extern IRType typeOfIRConst ( const IRConst* );
-extern IRType typeOfIRTemp  ( const IRStmtVec*, IRTemp );
-extern IRType typeOfIRExpr  ( const IRStmtVec*, const IRExpr* );
+extern IRType typeOfIRTemp  ( const IRTypeEnv*, IRTemp );
+extern IRType typeOfIRExpr  ( const IRTypeEnv*, const IRExpr* );
 
 /* What are the arg and result type for this IRLoadGOp? */
 extern void typeOfIRLoadGOp ( IRLoadGOp cvt,
