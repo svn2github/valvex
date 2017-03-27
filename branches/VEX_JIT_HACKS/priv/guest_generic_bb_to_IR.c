@@ -668,8 +668,8 @@ IRSB* bb_to_IR (
             the area of guest code to invalidate should we exit with a
             self-check failure. */
 
-         tistart_tmp = newIRTemp(irsb->stmts->tyenv, guest_word_type);
-         tilen_tmp   = newIRTemp(irsb->stmts->tyenv, guest_word_type);
+         tistart_tmp = newIRTemp(irsb->tyenv, irsb->stmts, guest_word_type);
+         tilen_tmp   = newIRTemp(irsb->tyenv, irsb->stmts, guest_word_type);
 
          IRConst* base2check_IRConst
             = guest_word_type==Ity_I32 ? IRConst_U32(toUInt(base2check))

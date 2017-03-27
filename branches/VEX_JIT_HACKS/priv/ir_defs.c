@@ -3788,6 +3788,13 @@ void setIRTempDefined(IRTempDefSet* def_set, IRTemp tmp)
    def_set->set[tmp / sizeof(UChar)] |= mask;
 }
 
+void clearIRTempDefSet(IRTempDefSet* def_set)
+{
+   for (UInt i = 0; i < def_set->slots_used; i++) {
+      def_set->set[i] = 0;
+   }
+}
+
 /*---------------------------------------------------------------*/
 /*--- Helper functions for the IR -- IR Basic Blocks          ---*/
 /*---------------------------------------------------------------*/
@@ -3831,16 +3838,11 @@ IRStmt *addEmptyIfThenElse(IRSB* bb, IRStmtVec* parent, IRExpr* cond)
 /*--- Helper functions for the IR -- IR Type Environments     ---*/
 /*---------------------------------------------------------------*/
 
-IRTemp newIRTemp(IRTypeEnv* env, IRStmtVec* stmts, IRType ty)
+void ensureSpaceInIRTypeEnv(IRTypeEnv* env, UInt new_size)
 {
    vassert(env != NULL);
-   vassert(stmts != NULL);
-   vassert(env->used >= 0);
-   vassert(env->size >= 0);
-   vassert(env->used <= env->size);
 
-   if (env->used == env->size) {
-      UInt new_size = 2 * env->size;
+   if (new_size > env->size) {
       IRType*      new_types = LibVEX_Alloc_inline(new_size * sizeof(IRType));
       IRStmtVecID* new_ids   = LibVEX_Alloc_inline(new_size * sizeof(IRStmtVecID));
       for (UInt i = 0; i < env->used; i++) {
@@ -3850,6 +3852,19 @@ IRTemp newIRTemp(IRTypeEnv* env, IRStmtVec* stmts, IRType ty)
       env->types = new_types;
       env->ids   = new_ids;
       env->size  = new_size;
+   }
+}
+
+IRTemp newIRTemp(IRTypeEnv* env, IRStmtVec* stmts, IRType ty)
+{
+   vassert(env != NULL);
+   vassert(stmts != NULL);
+   vassert(env->used >= 0);
+   vassert(env->size >= 0);
+   vassert(env->used <= env->size);
+
+   if (env->used == env->size) {
+      ensureSpaceInIRTypeEnv(env, 2 * env->size);
    }
 
    IRTemp tmp      = env->used;
@@ -5131,7 +5146,7 @@ void sanityCheckIRStmtVec(const IRSB* bb, const IRStmtVec* stmts,
 void sanityCheckIRSB(const IRSB* bb, const  HChar* caller, Bool require_flat,
                      IRType gWordTy)
 {
-   UInt n_ids = bb->id_seq + 1;
+   UInt n_ids = bb->id_seq;
    UInt *id_counts = LibVEX_Alloc_inline(n_ids * sizeof(UInt));
    for (UInt i = 0; i < n_ids; i++) {
       id_counts[i] = 0;

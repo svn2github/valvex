@@ -2762,19 +2762,20 @@ typedef
    }
    IRTempDefSet;
 
-static inline Bool isIRTempDefined(const IRTempDefSet* defd, IRTemp tmp)
+static inline Bool isIRTempDefined(const IRTempDefSet* def_set, IRTemp tmp)
 {
-   if (tmp / sizeof(UChar) < defd->slots_size) {
+   if (tmp / sizeof(UChar) < def_set->slots_size) {
       UInt mask = (1 << (tmp % sizeof(UChar)));
-      return toBool(defd->set[tmp / sizeof(UChar)] & mask);
+      return toBool(def_set->set[tmp / sizeof(UChar)] & mask);
    }
    return False;
 }
 
-extern void setIRTempDefined(IRTempDefSet* defd, IRTemp tmp);
-extern void ppIRTempDefSet(const IRTempDefSet* defd);
+extern void setIRTempDefined(IRTempDefSet* def_set, IRTemp tmp);
+extern void clearIRTempDefSet(IRTempDefSet* def_set);
+extern void ppIRTempDefSet(const IRTempDefSet* def_set);
 extern IRTempDefSet* emptyIRTempDefSet(void);
-extern IRTempDefSet* deepCopyIRTempDefSet(const IRTempDefSet* defd);
+extern IRTempDefSet* deepCopyIRTempDefSet(const IRTempDefSet* def_set);
 
 /* ------------------ Statements ------------------ */
 
@@ -3174,6 +3175,10 @@ extern IRTypeEnv* deepCopyIRTypeEnv ( const IRTypeEnv* );
 
 /* Pretty-print a type environment */
 extern void ppIRTypeEnv ( const IRTypeEnv* );
+
+/* Ensures that this IRTypeEnv can hold at least new_size types and ids.
+   Useful for certain bulk transformations. */
+extern void ensureSpaceInIRTypeEnv(IRTypeEnv*, UInt new_size);
 
 
 /* Code blocks, which in proper compiler terminology are superblocks

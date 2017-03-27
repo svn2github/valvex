@@ -125,13 +125,13 @@ load(IREndness endian, IRType type, HWord haddr)
 static void
 store_aux(IRSB *irsb, IREndness endian, IRExpr *addr, IRExpr *data)
 {
-   if (typeOfIRExpr(irsb->stmts, data) == Ity_D64) {
+   if (typeOfIRExpr(irsb->tyenv, data) == Ity_D64) {
       /* The insn selectors do not support writing a DFP value to memory.
          So we need to fix it here by reinterpreting the DFP value as an
          integer and storing that. */
       data = unop(Iop_ReinterpD64asI64, data);
    }
-   if (typeOfIRExpr(irsb->stmts, data) == Ity_I1) {
+   if (typeOfIRExpr(irsb->tyenv, data) == Ity_I1) {
       /* We cannot store a single bit. So we store it in a 32-bit container.
          See also load_aux. */
       data = unop(Iop_1Uto32, data);
@@ -158,7 +158,7 @@ store(IRSB *irsb, IREndness endian, HWord haddr, IRExpr *data)
       vpanic("invalid #bytes for address");
    }
 
-   IRType type = typeOfIRExpr(irsb->stmts, data);
+   IRType type = typeOfIRExpr(irsb->tyenv, data);
 
    vassert(type == Ity_I1 || sizeofIRType(type) <= 16);
 
