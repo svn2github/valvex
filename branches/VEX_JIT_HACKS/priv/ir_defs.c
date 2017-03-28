@@ -2423,7 +2423,7 @@ IRStmtVecID nextIRStmtVecID(IRSB* irsb)
 {
    IRStmtVecID next = irsb->id_seq;
    irsb->id_seq += 1;
-   vassert(irsb->id_seq < IRStmtVecID_INVALID);
+   vassert(irsb->id_seq != IRStmtVecID_INVALID);
    return next;
 }
 
@@ -2616,13 +2616,12 @@ IRPhiVec* deepCopyIRPhiVec(const IRPhiVec* vec)
 IRTempDefSet* deepCopyIRTempDefSet(const IRTempDefSet* def_set)
 {
    IRTempDefSet* def_set2 = LibVEX_Alloc_inline(sizeof(IRTempDefSet));
-   def_set2->slots_used = def_set->slots_used;
-   def_set2->slots_size = def_set->slots_size;
+   def_set2->slots_used   = def_set2->slots_size = def_set->slots_used;
    UChar* set2 = LibVEX_Alloc_inline(def_set2->slots_used * sizeof(UChar));
    for (UInt i = 0; i < def_set2->slots_used; i++) {
       set2[i] = def_set->set[i];
    }
-   def_set2->set        = set2;
+   def_set2->set          = set2;
    return def_set2;
 }
 
@@ -3778,12 +3777,14 @@ void setIRTempDefined(IRTempDefSet* def_set, IRTemp tmp)
    UInt slots_required = (tmp + sizeof(UChar)) / sizeof(UChar);
 
    if (slots_required >= def_set->slots_size) {
-      UChar* new_set = LibVEX_Alloc_inline(2 * def_set->slots_size);
+      UInt new_size  = (slots_required > 2 * def_set->slots_size) ?
+                       slots_required : 2 * def_set->slots_size;
+      UChar* new_set = LibVEX_Alloc_inline(new_size * sizeof(UChar));
       for (UInt i = 0; i < def_set->slots_used; i++) {
          new_set[i] = def_set->set[i];
       }
       def_set->set        = new_set;
-      def_set->slots_size *= 2;
+      def_set->slots_size = new_size;
    }
 
    if (slots_required > def_set->slots_used) {

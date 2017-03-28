@@ -5114,11 +5114,11 @@ static IRSB* maybe_loop_unroll_BB ( IRSB* bb0, Addr my_addr )
 
       bb2 = deepCopyIRSB(bb1);
 
-      /* This is tricky. We need to copy types and increase IDs. This can be
-         achieved here. But we also need to keep track in which IRStmtVec each
-         IRTemp is defined and that can be set only during traversal. So we do
-         only types here and deal with IDs and def_set during statement
-         traversal. */
+      /* This is tricky. We need to copy types. We also need to increase IDs for
+         nested IRStmtVec's. This can be achieved here. But we also need to keep
+         track in which IRStmtVec each IRTemp is defined and that can be set
+         only during traversal. So we do only types here and deal with IDs and
+         def_set during statement traversal. */
       ensureSpaceInIRTypeEnv(bb1->tyenv, bb1->tyenv->used + n_vars);
       for (i = 0; i < n_vars; i++) {
          bb1->tyenv->types[n_vars + i] = bb2->tyenv->types[i];
@@ -5134,7 +5134,8 @@ static IRSB* maybe_loop_unroll_BB ( IRSB* bb0, Addr my_addr )
          addStmtToIRStmtVec(bb1->stmts, bb2->stmts->stmts[i]);
       }
 
-      bb1->id_seq += n_ids;
+      /* Account for duplicated nested IRStmtVec's */
+      bb1->id_seq += (n_ids - 1);
    }
 
    if (DEBUG_IROPT) {
