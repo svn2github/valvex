@@ -3775,9 +3775,9 @@ void addIRPhiToIRPhiVec(IRPhiVec* phi_nodes, IRPhi* phi)
 
 void setIRTempDefined(IRTempDefSet* def_set, IRTemp tmp)
 {
-   vassert(!isIRTempDefined(def_set, tmp));
+   UInt slots_required = (tmp + sizeof(UChar)) / sizeof(UChar);
 
-   if (tmp / sizeof(UChar) >= def_set->slots_size) {
+   if (slots_required >= def_set->slots_size) {
       UChar* new_set = LibVEX_Alloc_inline(2 * def_set->slots_size);
       for (UInt i = 0; i < def_set->slots_used; i++) {
          new_set[i] = def_set->set[i];
@@ -3786,12 +3786,14 @@ void setIRTempDefined(IRTempDefSet* def_set, IRTemp tmp)
       def_set->slots_size *= 2;
    }
 
-   if (tmp / sizeof(UChar) >= def_set->slots_used) {
-      for (UInt i = def_set->slots_used; i < tmp / sizeof(UChar); i++) {
+   if (slots_required > def_set->slots_used) {
+      for (UInt i = def_set->slots_used; i < slots_required; i++) {
          def_set->set[i] = 0;
       }
-      def_set->slots_used = tmp / sizeof(UChar);
+      def_set->slots_used = slots_required;
    }
+
+   vassert(!isIRTempDefined(def_set, tmp));
 
    UInt mask = (1 << (tmp % sizeof(UChar)));
    def_set->set[tmp / sizeof(UChar)] |= mask;

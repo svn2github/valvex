@@ -4458,7 +4458,8 @@ HInstrArray* iselSB_X86 ( const IRSB* bb,
    /* Copy BB's type env. */
    /* TODO-JIT: Currently works only with no if-then-else statements. */
    vassert(bb->id_seq == 1);
-   env->stmts = bb->stmts;
+   env->type_env = bb->tyenv;
+   env->stmts    = bb->stmts;
 
    /* Make up an IRTemp -> virtual HReg mapping.  This doesn't
       change as we go along. */

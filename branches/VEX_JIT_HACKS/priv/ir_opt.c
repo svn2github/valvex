@@ -3030,6 +3030,7 @@ IRSB* cprop_BB ( IRSB* in )
 {
    SubstEnv* env = newSubstEnv(in->tyenv, in->stmts, NULL);
    IRSB* out     = emptyIRSB();
+   out->tyenv    = deepCopyIRTypeEnv(in->tyenv);
    out->stmts    = subst_and_fold_Stmts(env, in->stmts);
    out->id_seq   = in->id_seq;
    out->next     = subst_Expr( env, in->next );
