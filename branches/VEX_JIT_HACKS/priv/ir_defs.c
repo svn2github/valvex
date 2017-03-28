@@ -2604,10 +2604,6 @@ IRPhi* deepCopyIRPhi(const IRPhi* phi)
 
 IRPhiVec* deepCopyIRPhiVec(const IRPhiVec* vec)
 {
-   if (vec == NULL) {
-      return NULL;
-   }
-
    IRPhiVec* vec2  = LibVEX_Alloc_inline(sizeof(IRPhiVec));
    vec2->phis_used = vec2->phis_size = vec->phis_used;
    IRPhi **phis2   = LibVEX_Alloc_inline(vec2->phis_used * sizeof(IRPhi*));
@@ -2615,6 +2611,19 @@ IRPhiVec* deepCopyIRPhiVec(const IRPhiVec* vec)
       phis2[i] = deepCopyIRPhi(vec->phis[i]);
    vec2->phis      = phis2;
    return vec2;
+}
+
+IRTempDefSet* deepCopyIRTempDefSet(const IRTempDefSet* def_set)
+{
+   IRTempDefSet* def_set2 = LibVEX_Alloc_inline(sizeof(IRTempDefSet));
+   def_set2->slots_used = def_set->slots_used;
+   def_set2->slots_size = def_set->slots_size;
+   UChar* set2 = LibVEX_Alloc_inline(def_set2->slots_used * sizeof(UChar));
+   for (UInt i = 0; i < def_set2->slots_used; i++) {
+      set2[i] = def_set->set[i];
+   }
+   def_set2->set        = set2;
+   return def_set2;
 }
 
 IRStmt* deepCopyIRStmt(const IRStmt* s, IRStmtVec* parent)
