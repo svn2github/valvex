@@ -2728,7 +2728,7 @@ typedef
 extern void ppIRPhi(const IRPhi*);
 extern IRPhi* mkIRPhi(IRTemp dst, IRTemp srcThen, IRTemp srcElse);
 extern IRPhi* deepCopyIRPhi(const IRPhi*);
-extern void ppIRPhiVec(const IRPhiVec*);
+extern void ppIRPhiVec(const IRPhiVec*, UInt depth);
 extern IRPhiVec* emptyIRPhiVec(void);
 extern IRPhiVec* deepCopyIRPhiVec(const IRPhiVec*);
 
@@ -2762,20 +2762,20 @@ typedef
    }
    IRTempDefSet;
 
-static inline Bool isIRTempDefined(const IRTempDefSet* def_set, IRTemp tmp)
+static inline Bool isIRTempDefined(const IRTempDefSet* defset, IRTemp tmp)
 {
-   if (tmp / sizeof(UChar) < def_set->slots_size) {
+   if (tmp / sizeof(UChar) < defset->slots_size) {
       UInt mask = (1 << (tmp % sizeof(UChar)));
-      return toBool(def_set->set[tmp / sizeof(UChar)] & mask);
+      return toBool(defset->set[tmp / sizeof(UChar)] & mask);
    }
    return False;
 }
 
-extern void setIRTempDefined(IRTempDefSet* def_set, IRTemp tmp);
-extern void clearIRTempDefSet(IRTempDefSet* def_set);
-extern void ppIRTempDefSet(const IRTempDefSet* def_set);
+extern void setIRTempDefined(IRTempDefSet* defset, IRTemp tmp);
+extern void clearIRTempDefSet(IRTempDefSet* defset);
+extern void ppIRTempDefSet(const IRTempDefSet* defset, UInt depth);
 extern IRTempDefSet* emptyIRTempDefSet(void);
-extern IRTempDefSet* deepCopyIRTempDefSet(const IRTempDefSet* def_set);
+extern IRTempDefSet* deepCopyIRTempDefSet(const IRTempDefSet* defset);
 
 /* ------------------ Statements ------------------ */
 
@@ -2783,6 +2783,10 @@ extern IRTempDefSet* deepCopyIRTempDefSet(const IRTempDefSet* def_set);
 typedef
    struct _IRStmt
    IRStmt;
+
+typedef
+   struct _IRTypeEnv
+   IRTypeEnv;
 
 /* Uniquely identifies IRStmtVec in an IRSB, no matter how deeply nested. */
 typedef UShort IRStmtVecID;
@@ -2804,12 +2808,14 @@ typedef
       UInt               stmts_used;
       IRStmtVecID        id;
       struct _IRStmtVec* parent;
-      IRTempDefSet*      def_set;
+      IRTempDefSet*      defset;
    }
    IRStmtVec;
 
-extern void ppIRStmtVec(const IRStmtVec*);
-extern void ppIRStmtVec_wrk(const IRStmtVec*, UInt depth);
+/* Pretty-prints a vector of statements. If 'tyenv' is not NULL, pretty-prints
+   IRStmtVec's defset using nicer ppIRTypeEnvDefd(). */
+extern void ppIRStmtVec(const IRStmtVec* stmts, const IRTypeEnv* tyenv,
+                        UInt depth);
 
 /* Allocates an empty IRStmtVec with an invalid IRStmtVecID.
    Such an IRStmtVec needs to have a valid IRStmtVecID - get it from
@@ -3142,9 +3148,9 @@ extern IRStmt* IRStmt_IfThenElse(IRExpr* cond, IRStmtVec* then_leg,
    Parent is required for "if-then-else" statements. */
 extern IRStmt* deepCopyIRStmt(const IRStmt* src, IRStmtVec* parent);
 
-/* Pretty-print an IRStmt. */
-extern void ppIRStmt ( const IRStmt* );
-extern void ppIRStmt_wrk(const IRStmt*, UInt depth);
+/* Pretty-prints an IRStmt. 'tyenv' is eventually used for pretty-printing
+   nested IRStmtVec's and can be NULL. */
+extern void ppIRStmt(const IRStmt* stmt, const IRTypeEnv* tyenv, UInt depth);
 
 
 /* ------------------ Basic Blocks ------------------ */
@@ -3156,25 +3162,29 @@ extern void ppIRStmt_wrk(const IRStmt*, UInt depth);
    - 'types' which gives IRTemp's type
    - 'ids' which gives ID of the defining IRStmtVec
 */
-
-typedef
-   struct {
-      IRType*      types;
-      IRStmtVecID* ids;
-      UInt         size;
-      UInt         used;
-   }
-   IRTypeEnv;
+struct _IRTypeEnv {
+   IRType*      types;
+   IRStmtVecID* ids;
+   UInt         size;
+   UInt         used;
+};
 
 /* Obtain a new IRTemp. New IRTemp is allocated from 'tyenv' and is marked
-   as defined in 'stmts'->def_set. */
+   as defined in 'stmts'->defset. */
 extern IRTemp newIRTemp(IRTypeEnv* tyenv, IRStmtVec* stmts, IRType);
 
 /* Deep-copy a type environment */
 extern IRTypeEnv* deepCopyIRTypeEnv ( const IRTypeEnv* );
 
-/* Pretty-print a type environment */
+/* Pretty-print a type environment. Use ppIRTypeEnvDefd() if possible which
+   combines also information from an IRTempDefSet to print only IRTemp's which
+   are defined in a given IRStmtVec. */
 extern void ppIRTypeEnv ( const IRTypeEnv* );
+
+/* Much like ppIRTypeEnv() but prints only IRTemp's which are defined in a given
+   IRStmtVec. */
+extern void ppIRTypeEnvDefd(const IRTypeEnv* tyenv, const IRTempDefSet* defset,
+                            UInt depth);
 
 /* Ensures that this IRTypeEnv can hold at least new_size types and ids.
    Useful for certain bulk transformations. */

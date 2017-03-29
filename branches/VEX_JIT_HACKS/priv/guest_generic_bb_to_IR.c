@@ -394,7 +394,7 @@ IRSB* bb_to_IR (
       /* Print the resulting IR, if needed. */
       if (debug_print) {
          for (i = first_stmt_idx; i < irsb->stmts->stmts_used; i++) {
-            ppIRStmt_wrk(irsb->stmts->stmts[i], 3);
+            ppIRStmt(irsb->stmts->stmts[i], irsb->tyenv, 3);
             vex_printf("\n");
          }
       }

@@ -310,11 +310,14 @@ vex_inject_ir(IRSB *irsb, IREndness endian)
    if (0) {
       vex_printf("BEGIN inject\n");
       if (iricb.t_result == Ity_I1 || sizeofIRType(iricb.t_result) <= 8) {
-         ppIRStmt(irsb->stmts->stmts[irsb->stmts->stmts_used - 1]);
+         ppIRStmt(irsb->stmts->stmts[irsb->stmts->stmts_used - 1],
+                  irsb->tyenv, 0);
       } else if (sizeofIRType(iricb.t_result) == 16) {
-         ppIRStmt(irsb->stmts->stmts[irsb->stmts->stmts_used - 2]);
+         ppIRStmt(irsb->stmts->stmts[irsb->stmts->stmts_used - 2],
+                  irsb->tyenv, 0);
          vex_printf("\n");
-         ppIRStmt(irsb->stmts->stmts[irsb->stmts->stmts_used - 1]);
+         ppIRStmt(irsb->stmts->stmts[irsb->stmts->stmts_used - 1],
+                  irsb->tyenv, 0);
       }
       vex_printf("\nEND inject\n");
    }

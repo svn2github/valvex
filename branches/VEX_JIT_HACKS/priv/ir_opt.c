@@ -520,7 +520,7 @@ static void flatten_Stmt(IRTypeEnv* tyenv, IRStmtVec* stmts, IRStmt* st,
          break;
       default:
          vex_printf("\n");
-         ppIRStmt(st); 
+         ppIRStmt(st, tyenv, 0); 
          vex_printf("\n");
          vpanic("flatten_Stmt");
    }
@@ -532,7 +532,7 @@ static IRStmtVec* flatten_IRStmtVec(IRTypeEnv* tyenv, IRStmtVec* in,
    IRStmtVec* out = emptyIRStmtVec();
    out->parent    = parent;
    out->id        = in->id;
-   out->def_set   = deepCopyIRTempDefSet(in->def_set);
+   out->defset    = deepCopyIRTempDefSet(in->defset);
    for (UInt i = 0; i < in->stmts_used; i++) {
       flatten_Stmt(tyenv, out, in->stmts[i], out);
    }
@@ -852,7 +852,7 @@ static void handle_gets_Stmt (
 
       default:
          vex_printf("\n");
-         ppIRStmt(st);
+         ppIRStmt(st, NULL, 0);
          vex_printf("\n");
          vpanic("handle_gets_Stmt");
    }
@@ -988,7 +988,7 @@ static void redundant_put_removal_IRStmtVec(
             /* This Put is redundant because a later one will overwrite
                it.  So NULL (nop) it out. */
             if (DEBUG_IROPT) {
-               vex_printf("rPUT: "); ppIRStmt(st);
+               vex_printf("rPUT: "); ppIRStmt(st, tyenv, 0);
                vex_printf("\n");
             }
             stmts->stmts[i] = IRStmt_NoOp();
@@ -1095,7 +1095,7 @@ static SubstEnv* newSubstEnv(IRTypeEnv* tyenv, IRStmtVec* stmts_in,
    IRStmtVec* stmts_out = emptyIRStmtVec();
    stmts_out->id        = stmts_in->id;
    stmts_out->parent    = (parent_env != NULL) ? parent_env->stmts : NULL;
-   stmts_out->def_set   = deepCopyIRTempDefSet(stmts_in->def_set);
+   stmts_out->defset    = deepCopyIRTempDefSet(stmts_in->defset);
 
    SubstEnv* env = LibVEX_Alloc_inline(sizeof(SubstEnv));
    env->tyenv    = tyenv;
@@ -2639,7 +2639,7 @@ static IRStmt* subst_and_fold_Stmt(SubstEnv* env, IRStmt* st)
 {
 #  if 0
    vex_printf("\nsubst and fold stmt\n");
-   ppIRStmt(st);
+   ppIRStmt(st, env->tyenv, 0);
    vex_printf("\n");
 #  endif
 
@@ -2862,7 +2862,7 @@ static IRStmt* subst_and_fold_Stmt(SubstEnv* env, IRStmt* st)
             /* TODO-JIT: Pull the only remaining leg into the current IRStmtVec.
                Here is what needs to be done:
                1. Rewrite ID of all IRTemp's (in tyenv->ids) defined in the
-                  pulled leg. These are tracked in leg's def_set.
+                  pulled leg. These are tracked in leg's defset.
                2. Insert all statements from the leg in the env->stmts_out
                   at the current position. */
             vpanic("IfThenElse leg lifting unimplemented");
@@ -2883,7 +2883,7 @@ static IRStmt* subst_and_fold_Stmt(SubstEnv* env, IRStmt* st)
       }
 
    default:
-      vex_printf("\n"); ppIRStmt(st);
+      vex_printf("\n"); ppIRStmt(st, env->tyenv, 0);
       vpanic("subst_and_fold_Stmt");
    }
 }
@@ -3208,7 +3208,7 @@ static void addUses_Stmt ( Bool* set, IRStmt* st )
       }
       default:
          vex_printf("\n");
-         ppIRStmt(st);
+         ppIRStmt(st, NULL, 0);
          vpanic("addUses_Stmt");
    }
 }
@@ -3262,7 +3262,7 @@ static void do_deadcode_IRStmtVec(Bool* set, IRStmtVec* stmts,
           /* it's an IRTemp which never got used.  Delete it. */
          if (DEBUG_IROPT) {
             vex_printf("DEAD: ");
-            ppIRStmt(st);
+            ppIRStmt(st, NULL, 0);
             vex_printf("\n");
          }
          stmts->stmts[i] = IRStmt_NoOp();
@@ -4298,7 +4298,7 @@ static void collapse_AddSub_chains_IRStmtVec(IRStmtVec* stmts)
          if (collapseChain(stmts, i - 1, var, &var2, &con2)) {
             if (DEBUG_IROPT) {
                vex_printf("replacing1 ");
-               ppIRStmt(st);
+               ppIRStmt(st, NULL, 0);
                vex_printf(" with ");
             }
             con2 += con;
@@ -4314,7 +4314,7 @@ static void collapse_AddSub_chains_IRStmtVec(IRStmtVec* stmts)
                                      IRExpr_Const(IRConst_U32(-con2)))
                  );
             if (DEBUG_IROPT) {
-               ppIRStmt(stmts->stmts[i]);
+               ppIRStmt(stmts->stmts[i], NULL, 0);
                vex_printf("\n");
             }
          }
@@ -4331,7 +4331,7 @@ static void collapse_AddSub_chains_IRStmtVec(IRStmtVec* stmts)
                                          ->Iex.RdTmp.tmp, &var2, &con2)) {
          if (DEBUG_IROPT) {
             vex_printf("replacing3 ");
-            ppIRStmt(st);
+            ppIRStmt(st, NULL, 0);
             vex_printf(" with ");
          }
          con2 += st->Ist.WrTmp.data->Iex.GetI.bias;
@@ -4342,7 +4342,7 @@ static void collapse_AddSub_chains_IRStmtVec(IRStmtVec* stmts)
                              IRExpr_RdTmp(var2),
                              con2));
          if (DEBUG_IROPT) {
-            ppIRStmt(stmts->stmts[i]);
+            ppIRStmt(stmts->stmts[i], NULL, 0);
             vex_printf("\n");
          }
          continue;
@@ -4356,7 +4356,7 @@ static void collapse_AddSub_chains_IRStmtVec(IRStmtVec* stmts)
                            &var2, &con2)) {
          if (DEBUG_IROPT) {
             vex_printf("replacing2 ");
-            ppIRStmt(st);
+            ppIRStmt(st, NULL, 0);
             vex_printf(" with ");
          }
          con2 += puti->bias;
@@ -4366,7 +4366,7 @@ static void collapse_AddSub_chains_IRStmtVec(IRStmtVec* stmts)
                                    con2,
                                    puti->data));
          if (DEBUG_IROPT) {
-            ppIRStmt(stmts->stmts[i]);
+            ppIRStmt(stmts->stmts[i], NULL, 0);
             vex_printf("\n");
          }
          continue;
@@ -4600,7 +4600,7 @@ Bool guestAccessWhichMightOverlapPutI(const IRTypeEnv* tyenv, IRStmtVec* stmts,
          return False;
 
       default:
-         vex_printf("\n"); ppIRStmt(s2); vex_printf("\n");
+         vex_printf("\n"); ppIRStmt(s2, tyenv, 0); vex_printf("\n");
          vpanic("guestAccessWhichMightOverlapPutI");
    }
 
@@ -4714,7 +4714,7 @@ void do_redundant_PutI_elimination(const IRTypeEnv* tyenv, IRStmtVec* stmts,
       if (delete) {
          if (DEBUG_IROPT) {
             vex_printf("rPI:  "); 
-            ppIRStmt(st); 
+            ppIRStmt(st, tyenv, 0);
             vex_printf("\n");
          }
          stmts->stmts[i] = IRStmt_NoOp();
@@ -4784,9 +4784,9 @@ static void deltaIRTemp(IRTypeEnv* tyenv, IRStmtVec* stmts, IRTemp *tmp,
 {
    *tmp += delta;
 
-   /* Adjust IRTemp's ID and also def_set of the current IRStmtVec. */
+   /* Adjust IRTemp's ID and also defset of the current IRStmtVec. */
    tyenv->ids[*tmp] = stmts->id;
-   setIRTempDefined(stmts->def_set, *tmp);
+   setIRTempDefined(stmts->defset, *tmp);
 }
 
 static void deltaIRStmtVec(IRTypeEnv* tyenv, IRStmtVec* stmts,
@@ -4889,7 +4889,7 @@ static void deltaIRStmt(IRTypeEnv* tyenv, IRStmtVec* stmts, IRStmt* st,
          break;
       }
       default: 
-         vex_printf("\n"); ppIRStmt(st); vex_printf("\n");
+         vex_printf("\n"); ppIRStmt(st, tyenv, 0); vex_printf("\n");
          vpanic("deltaIRStmt");
    }
 }
@@ -4898,9 +4898,9 @@ static void deltaIRStmt(IRTypeEnv* tyenv, IRStmtVec* stmts, IRStmt* st,
 static void deltaIRStmtVec(IRTypeEnv* tyenv, IRStmtVec* stmts,
                            UInt delta_tmp, UInt delta_id, IRStmtVec* parent)
 {
-   /* Clear the def_set now. It still points to original IRTemp's however
+   /* Clear the defset now. It still points to original IRTemp's however
       we are now moving to another set of IRTemp's shifted by 'delta'. */
-   clearIRTempDefSet(stmts->def_set);
+   clearIRTempDefSet(stmts->defset);
    stmts->id     += delta_id;
    stmts->parent = parent;
 
@@ -5118,7 +5118,7 @@ static IRSB* maybe_loop_unroll_BB ( IRSB* bb0, Addr my_addr )
          nested IRStmtVec's. This can be achieved here. But we also need to keep
          track in which IRStmtVec each IRTemp is defined and that can be set
          only during traversal. So we do only types here and deal with IDs and
-         def_set during statement traversal. */
+         defset during statement traversal. */
       ensureSpaceInIRTypeEnv(bb1->tyenv, bb1->tyenv->used + n_vars);
       for (i = 0; i < n_vars; i++) {
          bb1->tyenv->types[n_vars + i] = bb2->tyenv->types[i];
@@ -5466,7 +5466,7 @@ static void aoccCount_Stmt ( UShort* uses, IRStmt* st )
          return;
       }
       default: 
-         vex_printf("\n"); ppIRStmt(st); vex_printf("\n");
+         vex_printf("\n"); ppIRStmt(st, NULL, 0); vex_printf("\n");
          vpanic("aoccCount_Stmt");
    }
 }
@@ -5852,7 +5852,7 @@ static IRStmt* atbSubst_Stmt ( ATmpInfo* env, IRStmt* st )
          vpanic("TODO-JIT: what to do?");
          break;
       default: 
-         vex_printf("\n"); ppIRStmt(st); vex_printf("\n");
+         vex_printf("\n"); ppIRStmt(st, NULL, 0); vex_printf("\n");
          vpanic("atbSubst_Stmt");
    }
 }
@@ -6640,7 +6640,7 @@ static Bool do_XOR_TRANSFORM_IRStmtVec(IRTypeEnv* tyenv, IRStmtVec* stmts)
                                                   st->Ist.IfThenElse.else_leg);
             break;
          default:
-            vex_printf("\n"); ppIRStmt(st);
+            vex_printf("\n"); ppIRStmt(st, tyenv, 0);
             vpanic("do_XOR_TRANSFORMS_IRStmtVec");
       }
    }
@@ -6684,7 +6684,7 @@ static IRSB* do_MSVC_HACKS ( IRSB* sb )
 /*--- iropt main                                              ---*/
 /*---------------------------------------------------------------*/
 
-static Bool iropt_verbose = False; /* True; */
+static Bool iropt_verbose = True; /* True; */
 
 
 /* Do a simple cleanup pass on bb.  This is: redundant Get removal,
@@ -6856,9 +6856,10 @@ static void considerExpensives_IRStmtVec(/*OUT*/Bool* hasGetIorPutI,
                                          tyenv, st->Ist.IfThenElse.then_leg);
             considerExpensives_IRStmtVec(hasGetIorPutI, hasVorFtemps,
                                          tyenv, st->Ist.IfThenElse.else_leg);
+            break;
          default: 
          bad:
-            ppIRStmt(st);
+            ppIRStmt(st, tyenv, 0);
             vpanic("considerExpensives_IRStmtVec");
       }
    }

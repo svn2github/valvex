@@ -3864,7 +3864,7 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
 {
    if (vex_traceflags & VEX_TRACE_VCODE) {
       vex_printf("\n-- ");
-      ppIRStmt(stmt);
+      ppIRStmt(stmt, env->type_env, 0);
       vex_printf("\n");
    }
 
@@ -4310,7 +4310,7 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
    default: break;
    }
   stmt_fail:
-   ppIRStmt(stmt);
+   ppIRStmt(stmt, env->type_env, 0);
    vpanic("iselStmt");
 }
 

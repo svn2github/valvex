@@ -1585,7 +1585,7 @@ static void print_depth(UInt depth) {
    }
 }
 
-static void ppIRPhiVec_wrk(const IRPhiVec* phis, UInt depth)
+void ppIRPhiVec(const IRPhiVec* phis, UInt depth)
 {
    for (UInt i = 0; i < phis->phis_used; i++) {
       print_depth(depth);
@@ -1594,45 +1594,12 @@ static void ppIRPhiVec_wrk(const IRPhiVec* phis, UInt depth)
    }
 }
 
-void ppIRPhiVec(const IRPhiVec* phis)
+void ppIRTempDefSet(const IRTempDefSet* defset, UInt depth)
 {
-   ppIRPhiVec_wrk(phis, 0);
+   ppIRTypeEnvDefd(NULL, defset, depth);
 }
 
-static void ppIRTempDefSet_wrk(const IRTempDefSet* defd, UInt depth)
-{
-   UInt tmps_printed = 0;
-
-   for (UInt slot = 0; slot < defd->slots_used; slot++) {
-      UChar slot_value = defd->set[slot];
-      for (UInt bit = 0; bit < sizeof(UChar); bit++) {
-         if (slot_value & (1 << bit)) {
-            if (tmps_printed % 8 == 0)
-               print_depth(depth);
-
-            IRTemp tmp = slot * sizeof(UChar) + bit;
-            ppIRTemp(tmp);
-
-            if (tmps_printed % 8 == 7) 
-               vex_printf("\n"); 
-            else 
-               vex_printf("   ");
-
-            tmps_printed += 1;
-         }
-      }
-   }
-
-   if (tmps_printed > 0 && tmps_printed % 8 != 7) 
-      vex_printf("\n"); 
-}
-
-void ppIRTempDefSet(const IRTempDefSet* defd)
-{
-   ppIRTempDefSet_wrk(defd, 0);
-}
-
-void ppIRStmt_wrk(const IRStmt* s, UInt depth)
+void ppIRStmt(const IRStmt* s, const IRTypeEnv* tyenv, UInt depth)
 {
    print_depth(depth);
 
@@ -1720,22 +1687,17 @@ void ppIRStmt_wrk(const IRStmt* s, UInt depth)
          vex_printf("if (");
          ppIRExpr(s->Ist.IfThenElse.cond);
          vex_printf(") then {\n");
-         ppIRStmtVec_wrk(s->Ist.IfThenElse.then_leg, depth + 1);
+         ppIRStmtVec(s->Ist.IfThenElse.then_leg, tyenv, depth + 1);
          print_depth(depth);
          vex_printf("} else {\n");
-         ppIRStmtVec_wrk(s->Ist.IfThenElse.else_leg, depth + 1);
+         ppIRStmtVec(s->Ist.IfThenElse.else_leg, tyenv, depth + 1);
          print_depth(depth);
          vex_printf("}\n");
-         ppIRPhiVec_wrk(s->Ist.IfThenElse.phi_nodes, depth);
+         ppIRPhiVec(s->Ist.IfThenElse.phi_nodes, depth);
          break;
       default:
          vpanic("ppIRStmt");
    }
-}
-
-void ppIRStmt(const IRStmt* s)
-{
-   ppIRStmt_wrk(s, 0);
 }
 
 void ppIRTypeEnv(const IRTypeEnv* env)
@@ -1755,19 +1717,47 @@ void ppIRTypeEnv(const IRTypeEnv* env)
       vex_printf( "\n"); 
 }
 
-void ppIRStmtVec_wrk(const IRStmtVec* stmts, UInt depth)
+void ppIRTypeEnvDefd(const IRTypeEnv* tyenv, const IRTempDefSet* defset,
+                     UInt depth)
 {
-   ppIRTempDefSet_wrk(stmts->def_set, depth);
-   vex_printf("\n");
-   for (UInt i = 0; i < stmts->stmts_used; i++) {
-      ppIRStmt_wrk(stmts->stmts[i], depth);
-      vex_printf("\n");
+   UInt tmps_printed = 0;
+
+   for (UInt slot = 0; slot < defset->slots_used; slot++) {
+      UChar slot_value = defset->set[slot];
+      for (UInt bit = 0; bit < sizeof(UChar); bit++) {
+         if (slot_value & (1 << bit)) {
+            if (tmps_printed % 8 == 0)
+               print_depth(depth);
+
+            IRTemp tmp = slot * sizeof(UChar) + bit;
+            ppIRTemp(tmp);
+            if (tyenv != NULL) {
+               vex_printf("=");
+               ppIRType(tyenv->types[tmp]);
+            }
+
+            if (tmps_printed % 8 == 7) 
+               vex_printf("\n"); 
+            else 
+               vex_printf("   ");
+
+            tmps_printed += 1;
+         }
+      }
    }
+
+   if (tmps_printed > 0 && tmps_printed % 8 != 7) 
+      vex_printf("\n"); 
 }
 
-void ppIRStmtVec(const IRStmtVec* stmts)
+void ppIRStmtVec(const IRStmtVec* stmts, const IRTypeEnv* tyenv, UInt depth)
 {
-   ppIRStmtVec_wrk(stmts, 0);
+   ppIRTypeEnvDefd(tyenv, stmts->defset, depth);
+   vex_printf("\n");
+   for (UInt i = 0; i < stmts->stmts_used; i++) {
+      ppIRStmt(stmts->stmts[i], tyenv, depth);
+      vex_printf("\n");
+   }
 }
 
 void ppIRSB ( const IRSB* bb )
@@ -1775,8 +1765,7 @@ void ppIRSB ( const IRSB* bb )
    UInt depth = 0;
 
    vex_printf("IRSB {\n");
-   ppIRTypeEnv(bb->tyenv);
-   ppIRStmtVec_wrk(bb->stmts, depth + 1);
+   ppIRStmtVec(bb->stmts, bb->tyenv, depth + 1);
    print_depth(depth + 1);
    vex_printf("PUT(%d) = ", bb->offsIP);
    ppIRExpr( bb->next );
@@ -2247,8 +2236,8 @@ IRPhiVec* emptyIRPhiVec(void)
 IRTempDefSet* emptyIRTempDefSet(void)
 {
    IRTempDefSet* defset = LibVEX_Alloc_inline(sizeof(IRTempDefSet));
-   defset->slots_used     = 0;
-   defset->slots_size     = 8 / sizeof(UChar);
+   defset->slots_used   = 0;
+   defset->slots_size   = 8 / sizeof(UChar);
    vassert(defset->slots_size >= 1);
    defset->set = LibVEX_Alloc_inline(defset->slots_size * sizeof(UChar));
    return defset;
@@ -2398,7 +2387,7 @@ IRStmtVec* emptyIRStmtVec(void)
    stmts->stmts      = LibVEX_Alloc_inline(stmts->stmts_size * sizeof(IRStmt*));
    stmts->id         = IRStmtVecID_INVALID;
    stmts->parent     = NULL;
-   stmts->def_set    = emptyIRTempDefSet();
+   stmts->defset     = emptyIRTempDefSet();
    return stmts;
 }
 
@@ -2613,16 +2602,16 @@ IRPhiVec* deepCopyIRPhiVec(const IRPhiVec* vec)
    return vec2;
 }
 
-IRTempDefSet* deepCopyIRTempDefSet(const IRTempDefSet* def_set)
+IRTempDefSet* deepCopyIRTempDefSet(const IRTempDefSet* defset)
 {
-   IRTempDefSet* def_set2 = LibVEX_Alloc_inline(sizeof(IRTempDefSet));
-   def_set2->slots_used   = def_set2->slots_size = def_set->slots_used;
-   UChar* set2 = LibVEX_Alloc_inline(def_set2->slots_used * sizeof(UChar));
-   for (UInt i = 0; i < def_set2->slots_used; i++) {
-      set2[i] = def_set->set[i];
+   IRTempDefSet* defset2 = LibVEX_Alloc_inline(sizeof(IRTempDefSet));
+   defset2->slots_used   = defset2->slots_size = defset->slots_used;
+   UChar* set2 = LibVEX_Alloc_inline(defset2->slots_used * sizeof(UChar));
+   for (UInt i = 0; i < defset2->slots_used; i++) {
+      set2[i] = defset->set[i];
    }
-   def_set2->set          = set2;
-   return def_set2;
+   defset2->set          = set2;
+   return defset2;
 }
 
 IRStmt* deepCopyIRStmt(const IRStmt* s, IRStmtVec* parent)
@@ -2697,7 +2686,7 @@ IRStmtVec* deepCopyIRStmtVec(const IRStmtVec* src, IRStmtVec* parent)
    IRStmtVec* vec2  = LibVEX_Alloc_inline(sizeof(IRStmtVec));
    vec2->id         = src->id;
    vec2->parent     = parent;
-   vec2->def_set    = deepCopyIRTempDefSet(src->def_set);
+   vec2->defset     = deepCopyIRTempDefSet(src->defset);
    vec2->stmts_used = vec2->stmts_size = src->stmts_used;
    IRStmt **stmts2  = LibVEX_Alloc_inline(vec2->stmts_used * sizeof(IRStmt*));
    for (UInt i = 0; i < vec2->stmts_used; i++) {
@@ -3772,38 +3761,38 @@ void addIRPhiToIRPhiVec(IRPhiVec* phi_nodes, IRPhi* phi)
 /*--- Helper functions for the IR -- IR Temp Defined Set      ---*/
 /*---------------------------------------------------------------*/
 
-void setIRTempDefined(IRTempDefSet* def_set, IRTemp tmp)
+void setIRTempDefined(IRTempDefSet* defset, IRTemp tmp)
 {
    UInt slots_required = (tmp + sizeof(UChar)) / sizeof(UChar);
 
-   if (slots_required >= def_set->slots_size) {
-      UInt new_size  = (slots_required > 2 * def_set->slots_size) ?
-                       slots_required : 2 * def_set->slots_size;
+   if (slots_required >= defset->slots_size) {
+      UInt new_size  = (slots_required > 2 * defset->slots_size) ?
+                       slots_required : 2 * defset->slots_size;
       UChar* new_set = LibVEX_Alloc_inline(new_size * sizeof(UChar));
-      for (UInt i = 0; i < def_set->slots_used; i++) {
-         new_set[i] = def_set->set[i];
+      for (UInt i = 0; i < defset->slots_used; i++) {
+         new_set[i] = defset->set[i];
       }
-      def_set->set        = new_set;
-      def_set->slots_size = new_size;
+      defset->set        = new_set;
+      defset->slots_size = new_size;
    }
 
-   if (slots_required > def_set->slots_used) {
-      for (UInt i = def_set->slots_used; i < slots_required; i++) {
-         def_set->set[i] = 0;
+   if (slots_required > defset->slots_used) {
+      for (UInt i = defset->slots_used; i < slots_required; i++) {
+         defset->set[i] = 0;
       }
-      def_set->slots_used = slots_required;
+      defset->slots_used = slots_required;
    }
 
-   vassert(!isIRTempDefined(def_set, tmp));
+   vassert(!isIRTempDefined(defset, tmp));
 
    UInt mask = (1 << (tmp % sizeof(UChar)));
-   def_set->set[tmp / sizeof(UChar)] |= mask;
+   defset->set[tmp / sizeof(UChar)] |= mask;
 }
 
-void clearIRTempDefSet(IRTempDefSet* def_set)
+void clearIRTempDefSet(IRTempDefSet* defset)
 {
-   for (UInt i = 0; i < def_set->slots_used; i++) {
-      def_set->set[i] = 0;
+   for (UInt i = 0; i < defset->slots_used; i++) {
+      defset->set[i] = 0;
    }
 }
 
@@ -3883,7 +3872,7 @@ IRTemp newIRTemp(IRTypeEnv* env, IRStmtVec* stmts, IRType ty)
    env->used       += 1;
    env->types[tmp] = ty;
    env->ids[tmp]   = stmts->id;
-   setIRTempDefined(stmts->def_set, tmp);
+   setIRTempDefined(stmts->defset, tmp);
    return tmp;
 }
 
@@ -4186,7 +4175,7 @@ void sanityCheckFail ( const IRSB* bb, const IRStmt* stmt, const HChar* what )
    ppIRSB(bb);
    if (stmt) {
       vex_printf("\nIN STATEMENT:\n\n");
-      ppIRStmt_wrk(stmt, 1);
+      ppIRStmt(stmt, bb->tyenv, 1);
    }
    vex_printf("\n\nERROR = %s\n\n", what );
    vpanic("sanityCheckFail: exiting due to bad IR");
@@ -4245,7 +4234,7 @@ static Bool inScopeIRTemp(const IRTypeEnv* tyenv, const IRStmtVec* stmts,
    IRStmtVecID id = tyenv->ids[tmp];
    vassert(id != IRStmtVecID_INVALID);
 
-   while (!(isIRTempDefined(stmts->def_set, tmp))) {
+   while (!(isIRTempDefined(stmts->defset, tmp))) {
       stmts = stmts->parent;
       if (stmts == NULL)
          return False;

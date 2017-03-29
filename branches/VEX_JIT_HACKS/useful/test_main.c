@@ -2605,7 +2605,7 @@ static Bool checkForBogusLiterals ( /*FLAT*/ IRStmt* st )
          return isBogusAtom(st->Ist.Exit.guard);
       default: 
       unhandled:
-         ppIRStmt(st);
+         ppIRStmt(st, NULL, 0);
          VG_(tool_panic)("hasBogusLiterals");
    }
 }
@@ -2659,7 +2659,7 @@ IRSB* mc_instrument ( void* closureV,
       UInt first_stmt = bb->stmts->stmts_used;
 
       if (verboze) {
-         ppIRStmt(st);
+         ppIRStmt(st, bb->tyenv, 0);
          VG_(printf)("\n\n");
       }
 
@@ -2706,7 +2706,7 @@ IRSB* mc_instrument ( void* closureV,
 
          default:
             VG_(printf)("\n");
-            ppIRStmt(st);
+            ppIRStmt(st, bb->tyenv, 0);
             VG_(printf)("\n");
             VG_(tool_panic)("memcheck: unhandled IRStmt");
 
@@ -2715,7 +2715,7 @@ IRSB* mc_instrument ( void* closureV,
       if (verboze) {
          for (UInt j = first_stmt; j < bb->stmts->stmts_used; j++) {
             VG_(printf)("   ");
-            ppIRStmt(bb->stmts->stmts[j]);
+            ppIRStmt(bb->stmts->stmts[j], bb->tyenv, 0);
             VG_(printf)("\n");
          }
          VG_(printf)("\n");
@@ -2739,7 +2739,7 @@ IRSB* mc_instrument ( void* closureV,
    if (verboze) {
       for (UInt j = first_stmt; j < bb->stmts->stmts_used; j++) {
          VG_(printf)("   ");
-         ppIRStmt(bb->stmts->stmts[j]);
+         ppIRStmt(bb->stmts->stmts[j], bb->tyenv, 0);
          VG_(printf)("\n");
       }
       VG_(printf)("\n");

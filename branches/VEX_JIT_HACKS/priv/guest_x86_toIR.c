@@ -15475,7 +15475,7 @@ DisResult disInstr_X86 ( IRSB*        irsb_IN,
                                 callback_opaque,
                                 delta, archinfo, abiinfo, sigill_diag_IN );
       for (i = x1; i < x2; i++) {
-         ppIRStmt_wrk(irsb_IN->stmts->stmts[i], 4);
+         ppIRStmt(irsb_IN->stmts->stmts[i], irsb_IN->tyenv, 4);
          vex_printf("\n");
       }
       /* Failure of this assertion is serious and denotes a bug in
