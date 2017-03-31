@@ -1706,7 +1706,7 @@ void ppIRTypeEnv(const IRTypeEnv* env)
       if (i % 8 == 0)
          print_depth(1);
       ppIRTemp(i);
-      vex_printf(":%u=", env->ids[i]);
+      vex_printf("[%u]:", env->ids[i]);
       ppIRType(env->types[i]);
       if (i % 8 == 7) 
          vex_printf( "\n"); 
@@ -1732,7 +1732,7 @@ void ppIRTypeEnvDefd(const IRTypeEnv* tyenv, const IRTempDefSet* defset,
             IRTemp tmp = slot * sizeof(UChar) + bit;
             ppIRTemp(tmp);
             if (tyenv != NULL) {
-               vex_printf("=");
+               vex_printf(":");
                ppIRType(tyenv->types[tmp]);
             }
 

@@ -1105,7 +1105,7 @@ static SubstEnv* newSubstEnv(IRTypeEnv* tyenv, IRStmtVec* stmts_in,
    UInt  n_tmps = tyenv->used;
    env->map     = LibVEX_Alloc_inline(n_tmps * sizeof(IRExpr*));
    for (UInt i = 0; i < n_tmps; i++)
-      env->map[i] = NULL;
+      env->map[i] = (parent_env == NULL) ? NULL : parent_env->map[i];
    return env;
 }
 
@@ -2629,6 +2629,28 @@ static IRExpr* subst_Expr(SubstEnv* env, IRExpr* ex)
    }
 }
 
+/* A phi node of the form dst = phi(srcThen, srcElse) behaves much like
+   a WrTmp. Ensure that the connection between src{Then,Else} and assignments
+   in the corresponding leg is not broken:
+   - either add WrTemp assignment for src{Then,Else} in the leg, or
+   - adjust src{Then,Else} for the phi node. */
+static void subst_and_fold_PhiNodes(SubstEnv* env, IRStmtVec* stmts,
+                                    Bool srcThen, IRPhiVec* phi_nodes)
+{
+   for (UInt i = 0; i < phi_nodes->phis_used; i++) {
+      IRPhi* phi = phi_nodes->phis[i];
+      IRTemp* tmp = (srcThen) ? &phi->srcThen : &phi->srcElse;
+      IRExpr* expr = env->map[*tmp];
+      vassert(expr != NULL);
+
+      if (expr->tag == Iex_RdTmp) {
+         *tmp = expr->Iex.RdTmp.tmp;
+      } else {
+         addStmtToIRStmtVec(stmts, IRStmt_WrTmp(*tmp, expr));
+      }
+   }
+}
+
 static IRStmtVec* subst_and_fold_Stmts(SubstEnv* env, IRStmtVec* in);
 
 /* Apply the subst to stmt, then fold the result as much as possible.
@@ -2872,11 +2894,15 @@ static IRStmt* subst_and_fold_Stmt(SubstEnv* env, IRStmt* st)
              = newSubstEnv(env->tyenv, st->Ist.IfThenElse.then_leg, env);
          IRStmtVec* then_stmts
              = subst_and_fold_Stmts(then_env, st->Ist.IfThenElse.then_leg);
+         subst_and_fold_PhiNodes(then_env, then_stmts, True /* srcThen */,
+                                 st->Ist.IfThenElse.phi_nodes);
 
          SubstEnv* else_env
              = newSubstEnv(env->tyenv, st->Ist.IfThenElse.else_leg, env);
          IRStmtVec* else_stmts
              = subst_and_fold_Stmts(else_env, st->Ist.IfThenElse.else_leg);
+         subst_and_fold_PhiNodes(else_env, else_stmts, False /* srcThen */,
+                                 st->Ist.IfThenElse.phi_nodes);
 
          return IRStmt_IfThenElse(fcond, then_stmts, else_stmts,
                                   st->Ist.IfThenElse.phi_nodes);
@@ -6684,7 +6710,7 @@ static IRSB* do_MSVC_HACKS ( IRSB* sb )
 /*--- iropt main                                              ---*/
 /*---------------------------------------------------------------*/
 
-static Bool iropt_verbose = True; /* True; */
+static Bool iropt_verbose = False; /* True; */
 
 
 /* Do a simple cleanup pass on bb.  This is: redundant Get removal,
