@@ -1590,7 +1590,9 @@ void ppIRPhiVec(const IRPhiVec* phis, UInt depth)
    for (UInt i = 0; i < phis->phis_used; i++) {
       print_depth(depth);
       ppIRPhi(phis->phis[i]);
-      vex_printf("\n");
+      if (i < phis->phis_used - 1) {
+         vex_printf("\n");
+      }
    }
 }
 

@@ -4062,7 +4062,7 @@ static Bool do_cse_IRStmtVec(const IRTypeEnv* tyenv, IRStmtVec* stmts,
    Bool       invalidate;
    Bool       anyDone = False;
 
-   HashHW* tenv = newHHW(); /* :: IRTemp.index -> IRTemp */
+   HashHW* tenv = newHHW(); /* :: IRTemp -> IRTemp */
    HashHW* aenv = newHHW(); /* :: AvailExpr* -> IRTemp */
 
    /* Iterate forwards over the stmts.  
@@ -5261,6 +5261,14 @@ static void ppAEnv ( ATmpInfo* env )
    }
 }
 
+static void initAEnv(ATmpInfo env[], ATmpInfo parent[])
+{
+   for (UInt i = 0; i < A_NENV; i++) {
+      env[i].bindee = (parent != NULL) ? parent[i].bindee : NULL;
+      env[i].binder = (parent != NULL) ? parent[i].binder : IRTemp_INVALID;
+   }
+}
+
 /* --- Tree-traversal fns --- */
 
 /* Traverse an expr, and detect if any part of it reads memory or does
@@ -5343,11 +5351,10 @@ static void addToEnvFront ( ATmpInfo* env, IRTemp binder, IRExpr* bindee )
    env[0].getInterval.high = -1; /* filled in later */
 }
 
-/* Given uses :: array of UShort, indexed by IRTemp.index.
+/* Given uses :: array of UShort, indexed by IRTemp.
    Add the use-occurrences of temps in this expression 
-   to the env. 
-*/
-static void aoccCount_Expr ( UShort* uses, IRExpr* e )
+   to the env. */
+static void aoccCount_Expr(UShort uses[], const IRExpr* e)
 {
    Int i;
 
@@ -5408,12 +5415,14 @@ static void aoccCount_Expr ( UShort* uses, IRExpr* e )
     }
 }
 
+static void aoccCount_IRStmtVec(UShort uses[], const IRStmtVec* stmts,
+                                Bool* max_ga_known, Addr* max_ga);
 
-/* Given uses :: array of UShort, indexed by IRTemp.index.
+/* Given uses :: array of UShort, indexed by IRTemp.
    Add the use-occurrences of temps in this statement 
-   to the env. 
-*/
-static void aoccCount_Stmt ( UShort* uses, IRStmt* st )
+   to the env. */
+static void aoccCount_Stmt(UShort uses[], const IRStmt* st, Bool* max_ga_known,
+                           Addr* max_ga)
 {
    IRDirty* d;
    IRCAS*   cas;
@@ -5485,9 +5494,14 @@ static void aoccCount_Stmt ( UShort* uses, IRStmt* st )
          return;
       case Ist_IfThenElse: {
          aoccCount_Expr(uses, st->Ist.IfThenElse.cond);
+         aoccCount_IRStmtVec(uses, st->Ist.IfThenElse.then_leg,
+                             max_ga_known, max_ga);
+         aoccCount_IRStmtVec(uses, st->Ist.IfThenElse.else_leg,
+                             max_ga_known, max_ga);
          IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
          for (UInt i = 0; i < phi_nodes->phis_used; i++) {
-            uses[phi_nodes->phis[i]->dst]++;
+            uses[phi_nodes->phis[i]->srcThen]++;
+            uses[phi_nodes->phis[i]->srcElse]++;
          }
          return;
       }
@@ -5496,6 +5510,30 @@ static void aoccCount_Stmt ( UShort* uses, IRStmt* st )
          vpanic("aoccCount_Stmt");
    }
 }
+
+static void aoccCount_IRStmtVec(UShort uses[], const IRStmtVec* stmts,
+                                Bool* max_ga_known, Addr* max_ga)
+{
+   for (UInt i = 0; i < stmts->stmts_used; i++) {
+      const IRStmt* st = stmts->stmts[i];
+      switch (st->tag) {
+         case Ist_NoOp:
+            continue;
+         case Ist_IMark: {
+            UInt len = st->Ist.IMark.len;
+            Addr mga = st->Ist.IMark.addr + (len < 1 ? 1 : len) - 1;
+            *max_ga_known = True;
+            if (mga > *max_ga)
+               *max_ga = mga;
+            break;
+         }
+         default:
+            break;
+      }
+      aoccCount_Stmt(uses, st, max_ga_known, max_ga);
+   }
+}
+
 
 /* Look up a binding for tmp in the env.  If found, return the bound
    expression, and set the env's binding to NULL so it is marked as
@@ -5773,11 +5811,16 @@ static IRExpr* atbSubst_Expr ( ATmpInfo* env, IRExpr* e )
    }
 }
 
-/* Same deal as atbSubst_Expr, except for stmts. */
+static IRStmtVec* atbSubst_StmtVec(
+   const IRTypeEnv* tyenv, ATmpInfo* env, IRStmtVec* stmts,
+   Bool (*preciseMemExnsFn)(Int, Int, VexRegisterUpdates),
+   VexRegisterUpdates pxControl, UShort uses[]);
 
-static IRStmt* atbSubst_Stmt ( ATmpInfo* env, IRStmt* st )
+/* Same deal as atbSubst_Expr, except for stmts. */
+static IRStmt* atbSubst_Stmt(const IRTypeEnv* tyenv, ATmpInfo* env, IRStmt* st,
+   Bool (*preciseMemExnsFn)(Int, Int, VexRegisterUpdates),
+   VexRegisterUpdates pxControl, UShort uses[])
 {
-   Int     i;
    IRDirty *d, *d2;
    IRCAS   *cas, *cas2;
    IRPutI  *puti, *puti2;
@@ -5868,15 +5911,51 @@ static IRStmt* atbSubst_Stmt ( ATmpInfo* env, IRStmt* st )
          if (d2->mFx != Ifx_None)
             d2->mAddr = atbSubst_Expr(env, d2->mAddr);
          d2->guard = atbSubst_Expr(env, d2->guard);
-         for (i = 0; d2->args[i]; i++) {
+         for (UInt i = 0; d2->args[i]; i++) {
             IRExpr* arg = d2->args[i];
             if (LIKELY(!is_IRExpr_VECRET_or_GSPTR(arg)))
                d2->args[i] = atbSubst_Expr(env, arg);
          }
          return IRStmt_Dirty(d2);
-      case Ist_IfThenElse:
-         vpanic("TODO-JIT: what to do?");
-         break;
+      case Ist_IfThenElse: {
+         ATmpInfo then_env[A_NENV];
+         initAEnv(then_env, env);
+         IRStmtVec* then_leg
+            = atbSubst_StmtVec(tyenv, then_env, st->Ist.IfThenElse.then_leg,
+                               preciseMemExnsFn, pxControl, uses);
+
+         ATmpInfo else_env[A_NENV];
+         initAEnv(else_env, env);
+         IRStmtVec* else_leg
+            = atbSubst_StmtVec(tyenv, else_env, st->Ist.IfThenElse.else_leg,
+                               preciseMemExnsFn, pxControl, uses);
+
+         const IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
+         IRPhiVec* out = emptyIRPhiVec();
+         for (UInt i = 0; i < phi_nodes->phis_used; i++) {
+            IRPhi* phi = phi_nodes->phis[i];
+            if (uses[phi->dst] == 0) {
+               if (0) vex_printf("DEAD phi node\n");
+               continue; /* for (UInt i = 0; i < phi_nodes->phis_used; i++) */
+            }
+            addIRPhiToIRPhiVec(out, phi);
+
+            /* Dump bindings in env (if any) which lead to
+               phi->srcThen or phi->srcElse. */
+            IRExpr* e = atbSubst_Temp(then_env, phi->srcThen);
+            if (e != NULL) {
+               addStmtToIRStmtVec(then_leg, IRStmt_WrTmp(phi->srcThen, e));
+            }
+
+            e = atbSubst_Temp(else_env, phi->srcElse);
+            if (e != NULL) {
+               addStmtToIRStmtVec(else_leg, IRStmt_WrTmp(phi->srcElse, e));
+            }
+         }
+
+         return IRStmt_IfThenElse(atbSubst_Expr(env, st->Ist.IfThenElse.cond),
+                                  then_leg, else_leg, out);
+      }
       default: 
          vex_printf("\n"); ppIRStmt(st, NULL, 0); vex_printf("\n");
          vpanic("atbSubst_Stmt");
@@ -5943,7 +6022,7 @@ static Interval dirty_helper_puts (
    requiresPreciseMemExns return whether or not that modification
    requires precise exceptions. */
 static Interval stmt_modifies_guest_state ( 
-                   IRSB *bb, const IRStmt *st,
+                   const IRTypeEnv *tyenv, const IRStmt *st,
                    Bool (*preciseMemExnsFn)(Int,Int,VexRegisterUpdates),
                    VexRegisterUpdates pxControl,
                    /*OUT*/Bool *requiresPreciseMemExns
@@ -5954,7 +6033,7 @@ static Interval stmt_modifies_guest_state (
    switch (st->tag) {
    case Ist_Put: {
       Int offset = st->Ist.Put.offset;
-      Int size = sizeofIRType(typeOfIRExpr(bb->tyenv, st->Ist.Put.data));
+      Int size = sizeofIRType(typeOfIRExpr(tyenv, st->Ist.Put.data));
 
       *requiresPreciseMemExns
          = preciseMemExnsFn(offset, offset + size - 1, pxControl);
@@ -5996,16 +6075,153 @@ static Interval stmt_modifies_guest_state (
    }
 }
 
+static IRStmtVec* atbSubst_StmtVec(
+   const IRTypeEnv* tyenv, ATmpInfo* env, IRStmtVec* stmts,
+   Bool (*preciseMemExnsFn)(Int, Int, VexRegisterUpdates),
+   VexRegisterUpdates pxControl, UShort uses[])
+{
+   /* The stmts are being reordered, and we are guaranteed to end up with no
+      more than the number we started with. Use i to be the cursor of the
+      current stmt examined and j <= i to be that for the current stmt being
+      written. */
+   UInt j = 0;
+   for (UInt i = 0; i < stmts->stmts_used; i++) {
+
+      IRStmt* st = stmts->stmts[i];
+      if (st->tag == Ist_NoOp)
+         continue;
+     
+      /* Ensure there's at least one space in the env, by emitting
+         the oldest binding if necessary. */
+      if (env[A_NENV - 1].bindee != NULL) {
+         stmts->stmts[j] = IRStmt_WrTmp(env[A_NENV - 1].binder, 
+                                        env[A_NENV - 1].bindee);
+         j++;
+         vassert(j <= i);
+         env[A_NENV - 1].bindee = NULL;
+      }
+
+      /* Consider current stmt. */
+      if (st->tag == Ist_WrTmp && uses[st->Ist.WrTmp.tmp] <= 1) {
+         /* optional extra: dump dead bindings as we find them.
+            Removes the need for a prior dead-code removal pass. */
+         if (uses[st->Ist.WrTmp.tmp] == 0) {
+	    if (0) vex_printf("DEAD binding\n");
+            continue; /* for (UInt i = 0; i < stmts->stmts_used; i++) loop */
+         }
+         vassert(uses[st->Ist.WrTmp.tmp] == 1);
+
+         /* ok, we have 't = E', occ(t)==1.  Do the abovementioned
+            actions. */
+         IRExpr* e  = st->Ist.WrTmp.data;
+         IRExpr* e2 = atbSubst_Expr(env, e);
+         addToEnvFront(env, st->Ist.WrTmp.tmp, e2);
+         setHints_Expr(&env[0].doesLoad, &env[0].getInterval, e2);
+         /* don't advance j, as we are deleting this stmt and instead
+            holding it temporarily in the env. */
+         continue; /* for (UInt i = 0; i < stmts->stmts_used; i++) loop */
+      }
+
+      /* we get here for any other kind of statement. */
+      /* 'use up' any bindings required by the current statement. */
+      IRStmt* st2 = atbSubst_Stmt(tyenv, env, st, preciseMemExnsFn, pxControl,
+                                  uses);
+
+      /* Now, before this stmt, dump any bindings in env that it
+         invalidates.  These need to be dumped in the order in which
+         they originally entered env -- that means from oldest to
+         youngest. */
+
+      /* putInterval/stmtStores characterise what the stmt under
+         consideration does, or might do (sidely safe @ True). */
+
+      Bool putRequiresPreciseMemExns;
+      Interval putInterval = stmt_modifies_guest_state(
+                                tyenv, st, preciseMemExnsFn, pxControl,
+                                &putRequiresPreciseMemExns);
+
+      /* be True if this stmt writes memory or might do (==> we don't
+         want to reorder other loads or stores relative to it).  Also,
+         both LL and SC fall under this classification, since we
+         really ought to be conservative and not reorder any other
+         memory transactions relative to them. */
+      Bool stmtStores
+         = toBool( st->tag == Ist_Store
+                   || (st->tag == Ist_Dirty
+                       && dirty_helper_stores(st->Ist.Dirty.details))
+                   || st->tag == Ist_LLSC
+                   || st->tag == Ist_CAS );
+
+      for (Int k = A_NENV - 1; k >= 0; k--) {
+         if (env[k].bindee == NULL)
+            continue;
+         /* Compare the actions of this stmt with the actions of
+            binding 'k', to see if they invalidate the binding. */
+         Bool invalidateMe
+            = toBool(
+              /* a store invalidates loaded data */
+              (env[k].doesLoad && stmtStores)
+              /* a put invalidates get'd data, if they overlap */
+              || ((env[k].getInterval.present && putInterval.present) &&
+                  intervals_overlap(env[k].getInterval, putInterval))
+              /* a put invalidates loaded data. That means, in essense, that
+                 a load expression cannot be substituted into a statement
+                 that follows the put. But there is nothing wrong doing so
+                 except when the put statement requires precise exceptions.
+                 Think of a load that is moved past a put where the put
+                 updates the IP in the guest state. If the load generates
+                 a segfault, the wrong address (line number) would be
+                 reported. */
+              || (env[k].doesLoad && putInterval.present &&
+                  putRequiresPreciseMemExns)
+              /* probably overly conservative: a memory bus event
+                 invalidates absolutely everything, so that all
+                 computation prior to it is forced to complete before
+                 proceeding with the event (fence,lock,unlock). */
+              || st->tag == Ist_MBE
+              /* also be (probably overly) paranoid re AbiHints */
+              || st->tag == Ist_AbiHint
+              );
+         if (invalidateMe) {
+            stmts->stmts[j] = IRStmt_WrTmp(env[k].binder, env[k].bindee);
+            j++;
+            vassert(j <= i);
+            env[k].bindee = NULL;
+         }
+      }
+
+      /* Slide in-use entries in env up to the front */
+      UInt m = 0;
+      for (UInt k = 0; k < A_NENV; k++) {
+         if (env[k].bindee != NULL) {
+            env[m] = env[k];
+            m++;
+	 }
+      }
+      for (m = m; m < A_NENV; m++) {
+         env[m].bindee = NULL;
+      }
+
+      /* finally, emit the substituted statement */
+      stmts->stmts[j] = st2;
+      /* vex_printf("**2  "); ppIRStmt(stmts->stmts[j]); vex_printf("\n");*/
+      j++;
+
+      vassert(j <= i+1);
+   } /* for each stmt in the original bb ... */
+
+   /* Finally ... dump any left-over bindings.  Hmm.  Perhaps there should be no
+      left over bindings?  Or any left-over bindings are by definition dead? */
+   stmts->stmts_used = j;
+   return stmts;
+}
+
 /* notstatic */ Addr ado_treebuild_BB (
                         IRSB* bb,
                         Bool (*preciseMemExnsFn)(Int,Int,VexRegisterUpdates),
                         VexRegisterUpdates pxControl
                      )
 {
-   Int      j, k, m;
-   Bool     stmtStores, invalidateMe;
-   Interval putInterval;
-   IRStmt*  st2;
    ATmpInfo env[A_NENV];
 
    Bool   max_ga_known = False;
@@ -6023,25 +6239,8 @@ static Interval stmt_modifies_guest_state (
    for (UInt i = 0; i < n_tmps; i++)
       uses[i] = 0;
 
-   for (UInt i = 0; i < bb->stmts->stmts_used; i++) {
-      IRStmt* st = bb->stmts->stmts[i];
-      switch (st->tag) {
-         case Ist_NoOp:
-            continue;
-         case Ist_IMark: {
-            UInt len = st->Ist.IMark.len;
-            Addr mga = st->Ist.IMark.addr + (len < 1 ? 1 : len) - 1;
-            max_ga_known = True;
-            if (mga > max_ga)
-               max_ga = mga;
-            break;
-         }
-         default:
-            break;
-      }
-      aoccCount_Stmt( uses, st );
-   }
-   aoccCount_Expr(uses, bb->next );
+   aoccCount_IRStmtVec(uses, bb->stmts, &max_ga_known, &max_ga);
+   aoccCount_Expr(uses, bb->next);
 
 #  if 0
    for (i = 0; i < n_tmps; i++) {
@@ -6075,150 +6274,12 @@ static Interval stmt_modifies_guest_state (
       Finally, apply env to bb->next.  
    */
 
-   for (UInt i = 0; i < A_NENV; i++) {
-      env[i].bindee = NULL;
-      env[i].binder = IRTemp_INVALID;
-   }
+   initAEnv(env, NULL);
+   bb->stmts = atbSubst_StmtVec(bb->tyenv, env, bb->stmts, preciseMemExnsFn,
+                                pxControl, uses);
 
-   /* The stmts in bb are being reordered, and we are guaranteed to
-      end up with no more than the number we started with.  Use i to
-      be the cursor of the current stmt examined and j <= i to be that
-      for the current stmt being written. 
-   */
-   j = 0;
-   for (UInt i = 0; i < bb->stmts->stmts_used; i++) {
-
-      IRStmt* st = bb->stmts->stmts[i];
-      if (st->tag == Ist_NoOp)
-         continue;
-     
-      /* Ensure there's at least one space in the env, by emitting
-         the oldest binding if necessary. */
-      if (env[A_NENV-1].bindee != NULL) {
-         bb->stmts->stmts[j] = IRStmt_WrTmp( env[A_NENV-1].binder, 
-                                             env[A_NENV-1].bindee );
-         j++;
-         vassert(j <= i);
-         env[A_NENV-1].bindee = NULL;
-      }
-
-      /* Consider current stmt. */
-      if (st->tag == Ist_WrTmp && uses[st->Ist.WrTmp.tmp] <= 1) {
-         IRExpr *e, *e2;
-
-         /* optional extra: dump dead bindings as we find them.
-            Removes the need for a prior dead-code removal pass. */
-         if (uses[st->Ist.WrTmp.tmp] == 0) {
-	    if (0) vex_printf("DEAD binding\n");
-            continue; /* for (i = 0; i < bb->stmts->stmts_used; i++) loop */
-         }
-         vassert(uses[st->Ist.WrTmp.tmp] == 1);
-
-         /* ok, we have 't = E', occ(t)==1.  Do the abovementioned
-            actions. */
-         e  = st->Ist.WrTmp.data;
-         e2 = atbSubst_Expr(env, e);
-         addToEnvFront(env, st->Ist.WrTmp.tmp, e2);
-         setHints_Expr(&env[0].doesLoad, &env[0].getInterval, e2);
-         /* don't advance j, as we are deleting this stmt and instead
-            holding it temporarily in the env. */
-         continue; /* for (i = 0; i < bb->stmts_used; i++) loop */
-      }
-
-      /* we get here for any other kind of statement. */
-      /* 'use up' any bindings required by the current statement. */
-      st2 = atbSubst_Stmt(env, st);
-
-      /* Now, before this stmt, dump any bindings in env that it
-         invalidates.  These need to be dumped in the order in which
-         they originally entered env -- that means from oldest to
-         youngest. */
-
-      /* putInterval/stmtStores characterise what the stmt under
-         consideration does, or might do (sidely safe @ True). */
-
-      Bool putRequiresPreciseMemExns;
-      putInterval = stmt_modifies_guest_state(
-                       bb, st, preciseMemExnsFn, pxControl,
-                       &putRequiresPreciseMemExns
-                    );
-
-      /* be True if this stmt writes memory or might do (==> we don't
-         want to reorder other loads or stores relative to it).  Also,
-         both LL and SC fall under this classification, since we
-         really ought to be conservative and not reorder any other
-         memory transactions relative to them. */
-      stmtStores
-         = toBool( st->tag == Ist_Store
-                   || (st->tag == Ist_Dirty
-                       && dirty_helper_stores(st->Ist.Dirty.details))
-                   || st->tag == Ist_LLSC
-                   || st->tag == Ist_CAS );
-
-      for (k = A_NENV-1; k >= 0; k--) {
-         if (env[k].bindee == NULL)
-            continue;
-         /* Compare the actions of this stmt with the actions of
-            binding 'k', to see if they invalidate the binding. */
-         invalidateMe
-            = toBool(
-              /* a store invalidates loaded data */
-              (env[k].doesLoad && stmtStores)
-              /* a put invalidates get'd data, if they overlap */
-              || ((env[k].getInterval.present && putInterval.present) &&
-                  intervals_overlap(env[k].getInterval, putInterval))
-              /* a put invalidates loaded data. That means, in essense, that
-                 a load expression cannot be substituted into a statement
-                 that follows the put. But there is nothing wrong doing so
-                 except when the put statement requries precise exceptions.
-                 Think of a load that is moved past a put where the put
-                 updates the IP in the guest state. If the load generates
-                 a segfault, the wrong address (line number) would be
-                 reported. */
-              || (env[k].doesLoad && putInterval.present &&
-                  putRequiresPreciseMemExns)
-              /* probably overly conservative: a memory bus event
-                 invalidates absolutely everything, so that all
-                 computation prior to it is forced to complete before
-                 proceeding with the event (fence,lock,unlock). */
-              || st->tag == Ist_MBE
-              /* also be (probably overly) paranoid re AbiHints */
-              || st->tag == Ist_AbiHint
-              );
-         if (invalidateMe) {
-            bb->stmts->stmts[j] = IRStmt_WrTmp(env[k].binder, env[k].bindee);
-            j++;
-            vassert(j <= i);
-            env[k].bindee = NULL;
-         }
-      }
-
-      /* Slide in-use entries in env up to the front */
-      m = 0;
-      for (k = 0; k < A_NENV; k++) {
-         if (env[k].bindee != NULL) {
-            env[m] = env[k];
-            m++;
-	 }
-      }
-      for (m = m; m < A_NENV; m++) {
-         env[m].bindee = NULL;
-      }
-
-      /* finally, emit the substituted statement */
-      bb->stmts->stmts[j] = st2;
-      /* vex_printf("**2  "); ppIRStmt(bb->stmts->stmts[j]); vex_printf("\n");*/
-      j++;
-
-      vassert(j <= i+1);
-   } /* for each stmt in the original bb ... */
-
-   /* Finally ... substitute the ->next field as much as possible, and
-      dump any left-over bindings.  Hmm.  Perhaps there should be no
-      left over bindings?  Or any left-over bindings are
-      by definition dead? */
+   /* Finally ... substitute the ->next field as much as possible. */
    bb->next = atbSubst_Expr(env, bb->next);
-   bb->stmts->stmts_used = j;
 
    return max_ga_known ? max_ga : ~(Addr)0;
 }
@@ -6231,12 +6292,12 @@ static Interval stmt_modifies_guest_state (
 /* This isn't part of IR optimisation however this pass is needed before IRSB
    is handed to instruction selection phase. Deconstructs all phi nodes.
    Consider this example:
-      t0:2 = phi(t1:0,t2:1)
+      t2 = phi(t1,t0)
    which gets trivially deconstructed into statements appended to:
       - then leg:
-         t0:2 = t1:0
+         t2 = t1
       - else leg:
-         t0:2 = t2:1
+         t2 = t0
 
    Such an IRSB no longer holds SSA property after this pass but subsequent
    phases do no require it. */
@@ -6252,7 +6313,7 @@ static void deconstruct_phi_nodes_IRStmtVec(IRStmtVec* stmts)
       IRStmtVec* else_leg = st->Ist.IfThenElse.else_leg;
       IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
       for (UInt j = 0; j < phi_nodes->phis_used; j++) {
-         IRPhi* phi = phi_nodes->phis[j];
+         const IRPhi* phi = phi_nodes->phis[j];
          addStmtToIRStmtVec(then_leg, IRStmt_WrTmp(phi->dst,
                                                    IRExpr_RdTmp(phi->srcThen)));
          addStmtToIRStmtVec(else_leg, IRStmt_WrTmp(phi->dst,
