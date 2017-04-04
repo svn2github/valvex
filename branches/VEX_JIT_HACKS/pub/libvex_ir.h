@@ -2777,16 +2777,59 @@ extern void ppIRTempDefSet(const IRTempDefSet* defset, UInt depth);
 extern IRTempDefSet* emptyIRTempDefSet(void);
 extern IRTempDefSet* deepCopyIRTempDefSet(const IRTempDefSet* defset);
 
+
+/* --------------- If-Then-Else control flow diamond --------------- */
+
+/* If-Then-Else control flow diamond. It contains:
+   - Guard controling whether "then" or "else" leg is taken
+   - A hint which leg is more likely to be taken (hot path vs cold path)
+   - "then" and "else" legs with vectors of statements
+     At the moment, nested "if-then-else" statements are not supported.
+   - Phi nodes, which are used to merge temporaries from "then" and "else" legs
+
+    A leg can either end with an unconditional exit or join the main flow.
+    At the moment, unconditional exits are not supported.
+*/
+
+typedef
+   enum {
+      IfThenElse_ThenLikely=0x1E00,
+      IfThenElse_ElseLikely
+   }
+   IRIfThenElse_Hint;
+
+typedef
+   struct _IRStmtVec
+   IRStmtVec;
+
+typedef
+   struct _IRTypeEnv
+   IRTypeEnv;
+
+typedef
+   struct {
+      IRExpr*           cond;
+      IRIfThenElse_Hint hint;
+      IRStmtVec*        then_leg;
+      IRStmtVec*        else_leg;
+      IRPhiVec*         phi_nodes;
+   }
+   IRIfThenElse;
+
+extern void ppIRIfThenElse_Hint(IRIfThenElse_Hint hint);
+extern void ppIRIfThenElse(const IRIfThenElse* ite, const IRTypeEnv* tyenv,
+                           UInt depth);
+extern IRIfThenElse* mkIRIfThenElse(IRExpr* cond, IRIfThenElse_Hint hint,
+                                    IRStmtVec* then_leg, IRStmtVec* else_leg,
+                                    IRPhiVec* phi_nodes);
+
+
 /* ------------------ Statements ------------------ */
 
 /* IRStmt and IRStmtVec are mutually recursive. */
 typedef
    struct _IRStmt
    IRStmt;
-
-typedef
-   struct _IRTypeEnv
-   IRTypeEnv;
 
 /* Uniquely identifies IRStmtVec in an IRSB, no matter how deeply nested. */
 typedef UShort IRStmtVecID;
@@ -2801,16 +2844,14 @@ typedef UShort IRStmtVecID;
      to IRStmtVec #0.
    - A set which keeps track of which IRTemp's are defined in this IRStmtVec.
 */
-typedef
-   struct _IRStmtVec {
-      IRStmt**           stmts;
-      UInt               stmts_size;
-      UInt               stmts_used;
-      IRStmtVecID        id;
-      struct _IRStmtVec* parent;
-      IRTempDefSet*      defset;
-   }
-   IRStmtVec;
+struct _IRStmtVec {
+   IRStmt**      stmts;
+   UInt          stmts_size;
+   UInt          stmts_used;
+   IRStmtVecID   id;
+   IRStmtVec*    parent;
+   IRTempDefSet* defset;
+};
 
 /* Pretty-prints a vector of statements. If 'tyenv' is not NULL, pretty-prints
    IRStmtVec's defset using nicer ppIRTypeEnvDefd(). */
@@ -2841,7 +2882,7 @@ extern IRStmtVec* deepCopyIRStmtVec(const IRStmtVec* src, IRStmtVec* parent);
 
 typedef 
    enum {
-      Ist_NoOp=0x1E00,
+      Ist_NoOp=0x1F00,
       Ist_IMark,     /* META */
       Ist_AbiHint,   /* META */
       Ist_Put,
@@ -3098,26 +3139,31 @@ struct _IRStmt {
          Int        offsIP;   /* Guest state offset for IP */
       } Exit;
 
-      /* If-Then-Else control flow diamond. It contains:
-         - Guard controling whether "then" or "else" leg is taken
-         - "then" and "else" legs with vectors of statements
-            At the moment, nested "if-then-else" statements are not supported.
-         - Phi nodes, which are used to merge temporaries from "then" and
-           "else" legs
-         - TODO-JIT: A hint which leg is more likely to be taken (hot path)
-
-         A leg can either end with an unconditional exit or join the main
-         flow.
+      /* If-Then-Else control flow diamond. See IRIfThenElse for details.
 
          ppIRIfThenElse output:
-              if (<cond>) then { <IRStmtVec> } else { <IRStmtVec> }
-          eg. if (t3) then { <then-statements> } else { <else-statements> }
-      */
+              if (<cond>) [<hint>] then {
+                 <IRTempDefSet>
+                 <IRStmtVec>
+              } else {
+                 <IRTempDefSet>
+                 <IRStmtVec>
+              }
+              <phi-nodes>
+
+          eg. if (t3) [IfThenElse_ThenLikely] then {
+                 t4:I32   t7:I32
+
+                 t4=0x2
+                 t7=Add32(t2,t1)
+              } else {
+                 t5:I32
+
+                 t5=0x3
+              }
+              t6=phi(t4,t5) */
       struct {
-         IRExpr*    cond;
-         IRStmtVec* then_leg;
-         IRStmtVec* else_leg;
-         IRPhiVec*  phi_nodes;
+         IRIfThenElse* details;
       } IfThenElse;
    } Ist;
 };
@@ -3141,8 +3187,9 @@ extern IRStmt* IRStmt_Dirty   ( IRDirty* details );
 extern IRStmt* IRStmt_MBE     ( IRMBusEvent event );
 extern IRStmt* IRStmt_Exit    ( IRExpr* guard, IRJumpKind jk, IRConst* dst,
                                 Int offsIP );
-extern IRStmt* IRStmt_IfThenElse(IRExpr* cond, IRStmtVec* then_leg,
-                                 IRStmtVec* else_leg, IRPhiVec* phi_nodes);
+extern IRStmt* IRStmt_IfThenElse(IRExpr* cond, IRIfThenElse_Hint hint,
+                                 IRStmtVec* then_leg, IRStmtVec* else_leg,
+                                 IRPhiVec* phi_nodes);
 
 /* Deep-copy an IRStmt.
    Parent is required for "if-then-else" statements. */
@@ -3242,7 +3289,8 @@ extern IRStmtVecID nextIRStmtVecID(IRSB*);
 /* Allocates an empty IfThenElse, assigns it a valid IRStmtVecID
    and sets the parent for both then and else legs.
    The returned IRStmt is added to the parent IRStmtVec and ready to be used. */
-extern IRStmt *addEmptyIfThenElse(IRSB* bb, IRStmtVec* parent, IRExpr* cond);
+extern IRStmt *addEmptyIfThenElse(IRSB* bb, IRStmtVec* parent, IRExpr* cond,
+                                  IRIfThenElse_Hint hint);
 
 /*---------------------------------------------------------------*/
 /*--- Helper functions for the IR                             ---*/

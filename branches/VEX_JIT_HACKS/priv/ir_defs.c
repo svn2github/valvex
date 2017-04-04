@@ -1601,6 +1601,31 @@ void ppIRTempDefSet(const IRTempDefSet* defset, UInt depth)
    ppIRTypeEnvDefd(NULL, defset, depth);
 }
 
+void ppIRIfThenElse_Hint(IRIfThenElse_Hint hint)
+{
+   switch (hint) {
+   case IfThenElse_ThenLikely: vex_printf("IfThenElse_ThenLikely"); break;
+   case IfThenElse_ElseLikely: vex_printf("IfThenElse_ElseLikely"); break;
+   default: vpanic("ppIRIfThenElse_Hint");
+   }
+}
+
+void ppIRIfThenElse(const IRIfThenElse* ite, const IRTypeEnv* tyenv, UInt depth)
+{
+   vex_printf("if (");
+   ppIRExpr(ite->cond);
+   vex_printf(") [");
+   ppIRIfThenElse_Hint(ite->hint);
+   vex_printf("] then {\n");
+   ppIRStmtVec(ite->then_leg, tyenv, depth + 1);
+   print_depth(depth);
+   vex_printf("} else {\n");
+   ppIRStmtVec(ite->else_leg, tyenv, depth + 1);
+   print_depth(depth);
+   vex_printf("}\n");
+   ppIRPhiVec(ite->phi_nodes, depth);
+}
+
 void ppIRStmt(const IRStmt* s, const IRTypeEnv* tyenv, UInt depth)
 {
    print_depth(depth);
@@ -1686,16 +1711,7 @@ void ppIRStmt(const IRStmt* s, const IRTypeEnv* tyenv, UInt depth)
          vex_printf(" } ");
          break;
       case Ist_IfThenElse:
-         vex_printf("if (");
-         ppIRExpr(s->Ist.IfThenElse.cond);
-         vex_printf(") then {\n");
-         ppIRStmtVec(s->Ist.IfThenElse.then_leg, tyenv, depth + 1);
-         print_depth(depth);
-         vex_printf("} else {\n");
-         ppIRStmtVec(s->Ist.IfThenElse.else_leg, tyenv, depth + 1);
-         print_depth(depth);
-         vex_printf("}\n");
-         ppIRPhiVec(s->Ist.IfThenElse.phi_nodes, depth);
+         ppIRIfThenElse(s->Ist.IfThenElse.details, tyenv, depth);
          break;
       default:
          vpanic("ppIRStmt");
@@ -2214,8 +2230,7 @@ IRLoadG* mkIRLoadG ( IREndness end, IRLoadGOp cvt,
    return lg;
 }
 
-
-/* Constructors -- IRStmt */
+/* Constructors -- IRIfThenElse */
 
 IRPhi* mkIRPhi(IRTemp dst, IRTemp srcThen, IRTemp srcElse)
 {
@@ -2244,6 +2259,22 @@ IRTempDefSet* emptyIRTempDefSet(void)
    defset->set = LibVEX_Alloc_inline(defset->slots_size * sizeof(UChar));
    return defset;
 }
+
+IRIfThenElse* mkIRIfThenElse(IRExpr* cond, IRIfThenElse_Hint hint,
+                             IRStmtVec* then_leg, IRStmtVec* else_leg,
+                             IRPhiVec* phi_nodes)
+{
+   IRIfThenElse* ite = LibVEX_Alloc_inline(sizeof(IRIfThenElse));
+   ite->cond         = cond;
+   ite->hint         = hint;
+   ite->then_leg     = then_leg;
+   ite->else_leg     = else_leg;
+   ite->phi_nodes    = phi_nodes;
+   return ite;
+}
+
+
+/* Constructors -- IRStmt */
 
 IRStmt* IRStmt_NoOp ( void )
 {
@@ -2353,15 +2384,14 @@ IRStmt* IRStmt_Exit ( IRExpr* guard, IRJumpKind jk, IRConst* dst,
    return s;
 }
 
-IRStmt* IRStmt_IfThenElse(IRExpr* cond, IRStmtVec* then_leg,
-                          IRStmtVec* else_leg, IRPhiVec* phi_nodes)
+IRStmt* IRStmt_IfThenElse(IRExpr* cond, IRIfThenElse_Hint hint,
+                          IRStmtVec* then_leg, IRStmtVec* else_leg,
+                          IRPhiVec* phi_nodes)
 {
-   IRStmt* s = LibVEX_Alloc_inline(sizeof(IRStmt));
-   s->tag                      = Ist_IfThenElse;
-   s->Ist.IfThenElse.cond      = cond;
-   s->Ist.IfThenElse.then_leg  = then_leg;
-   s->Ist.IfThenElse.else_leg  = else_leg;
-   s->Ist.IfThenElse.phi_nodes = phi_nodes;
+   IRStmt* s                 = LibVEX_Alloc_inline(sizeof(IRStmt));
+   s->tag                    = Ist_IfThenElse;
+   s->Ist.IfThenElse.details = mkIRIfThenElse(cond, hint, then_leg, else_leg,
+                                              phi_nodes);
    return s;
 }
 
@@ -2673,11 +2703,13 @@ IRStmt* deepCopyIRStmt(const IRStmt* s, IRStmtVec* parent)
                             s->Ist.Exit.jk,
                             deepCopyIRConst(s->Ist.Exit.dst),
                             s->Ist.Exit.offsIP);
-      case Ist_IfThenElse:
-         return IRStmt_IfThenElse(deepCopyIRExpr(s->Ist.IfThenElse.cond),
-                          deepCopyIRStmtVec(s->Ist.IfThenElse.then_leg, parent),
-                          deepCopyIRStmtVec(s->Ist.IfThenElse.else_leg, parent),
-                          deepCopyIRPhiVec(s->Ist.IfThenElse.phi_nodes));
+      case Ist_IfThenElse: {
+         const IRIfThenElse* ite = s->Ist.IfThenElse.details;
+         return IRStmt_IfThenElse(deepCopyIRExpr(ite->cond), ite->hint,
+                                  deepCopyIRStmtVec(ite->then_leg, parent),
+                                  deepCopyIRStmtVec(ite->else_leg, parent),
+                                  deepCopyIRPhiVec(ite->phi_nodes));
+      }
       default: 
          vpanic("deepCopyIRStmt");
    }
@@ -3822,7 +3854,8 @@ void addStmtToIRSB ( IRSB* bb, IRStmt* st )
    addStmtToIRStmtVec(bb->stmts, st);
 }
 
-IRStmt *addEmptyIfThenElse(IRSB* bb, IRStmtVec* parent, IRExpr* cond)
+IRStmt *addEmptyIfThenElse(IRSB* bb, IRStmtVec* parent, IRExpr* cond,
+                           IRIfThenElse_Hint hint)
 {
    IRStmtVec* then_leg = emptyIRStmtVec();
    then_leg->id        = nextIRStmtVecID(bb);
@@ -3832,7 +3865,8 @@ IRStmt *addEmptyIfThenElse(IRSB* bb, IRStmtVec* parent, IRExpr* cond)
    else_leg->id        = nextIRStmtVecID(bb);
    else_leg->parent    = parent;
 
-   IRStmt* st = IRStmt_IfThenElse(cond, then_leg, else_leg, emptyIRPhiVec());
+   IRStmt* st = IRStmt_IfThenElse(cond, hint, then_leg, else_leg,
+                                  emptyIRPhiVec());
    addStmtToIRStmtVec(parent, st);
    return st;
 }
@@ -4120,9 +4154,9 @@ Bool isFlatIRStmt ( const IRStmt* st )
       case Ist_Exit:
          return isIRAtom(st->Ist.Exit.guard);
       case Ist_IfThenElse:
-         return isIRAtom(st->Ist.IfThenElse.cond)
-                && isFlatIRStmtVec(st->Ist.IfThenElse.then_leg)
-                && isFlatIRStmtVec(st->Ist.IfThenElse.else_leg);
+         return isIRAtom(st->Ist.IfThenElse.details->cond)
+                && isFlatIRStmtVec(st->Ist.IfThenElse.details->then_leg)
+                && isFlatIRStmtVec(st->Ist.IfThenElse.details->else_leg);
       default: 
          vpanic("isFlatIRStmt(st)");
    }
@@ -4352,8 +4386,8 @@ static void useBeforeDef_IRPhi(const IRSB* bb, const IRStmtVec* stmts,
 {
    vassert(stmt->tag == Ist_IfThenElse);
 
-   IRStmtVec* then_leg = stmt->Ist.IfThenElse.then_leg;
-   IRStmtVec* else_leg = stmt->Ist.IfThenElse.else_leg;
+   IRStmtVec* then_leg = stmt->Ist.IfThenElse.details->then_leg;
+   IRStmtVec* else_leg = stmt->Ist.IfThenElse.details->else_leg;
 
    useBeforeDef_Temp(bb, then_leg, stmt, phi->srcThen, def_counts);
    useBeforeDef_Temp(bb, else_leg, stmt, phi->srcElse, def_counts);
@@ -4456,7 +4490,7 @@ void useBeforeDef_Stmt(const IRSB* bb, const IRStmtVec* stmts,
          useBeforeDef_Expr(bb, stmts, stmt, stmt->Ist.Exit.guard, def_counts);
          break;
       case Ist_IfThenElse:
-         useBeforeDef_Expr(bb, stmts, stmt, stmt->Ist.IfThenElse.cond,
+         useBeforeDef_Expr(bb, stmts, stmt, stmt->Ist.IfThenElse.details->cond,
                            def_counts);
          /* Traversing into legs and phi nodes driven from
             sanityCheckIRStmtVec(). */
@@ -5047,8 +5081,8 @@ void tcStmt(const IRSB* bb, const IRStmtVec* stmts, const IRStmt* stmt,
             sanityCheckFail(bb,stmt,"IRStmt.Exit.offsIP: too low");
          break;
       case Ist_IfThenElse:
-         tcExpr(bb, stmts, stmt, stmt->Ist.IfThenElse.cond, gWordTy);
-         if (typeOfIRExpr(tyenv, stmt->Ist.IfThenElse.cond) != Ity_I1)
+         tcExpr(bb, stmts, stmt, stmt->Ist.IfThenElse.details->cond, gWordTy);
+         if (typeOfIRExpr(tyenv, stmt->Ist.IfThenElse.details->cond) != Ity_I1)
             sanityCheckFail(bb,stmt,"IRStmt.IfThenElse.cond: not :: Ity_I1");
          /* Traversing into legs and phi nodes driven from
             sanityCheckIRStmtVec(). */
@@ -5116,8 +5150,9 @@ void sanityCheckIRStmtVec(const IRSB* bb, const IRStmtVec* stmts,
       tcStmt(bb, stmts, stmt, require_flat, gWordTy);
 
       if (stmt->tag == Ist_IfThenElse) {
-         const IRStmtVec* then_leg = stmt->Ist.IfThenElse.then_leg;
-         const IRStmtVec* else_leg = stmt->Ist.IfThenElse.else_leg;
+         const IRIfThenElse* ite = stmt->Ist.IfThenElse.details;
+         const IRStmtVec* then_leg = ite->then_leg;
+         const IRStmtVec* else_leg = ite->else_leg;
 
          if (then_leg->parent == NULL) {
             sanityCheckFail(bb, stmt, "IfThenElse.then.parent is NULL");
@@ -5138,8 +5173,7 @@ void sanityCheckIRStmtVec(const IRSB* bb, const IRStmtVec* stmts,
                               id_counts, n_ids, gWordTy);
          sanityCheckIRStmtVec(bb, else_leg, require_flat, def_counts,
                               id_counts, n_ids, gWordTy);
-         sanityCheckIRPhiNodes(bb, stmts, stmt,
-                               stmt->Ist.IfThenElse.phi_nodes, def_counts);
+         sanityCheckIRPhiNodes(bb, stmts, stmt, ite->phi_nodes, def_counts);
       }
    }
 }

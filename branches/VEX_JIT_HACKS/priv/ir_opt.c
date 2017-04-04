@@ -510,14 +510,16 @@ static void flatten_Stmt(IRTypeEnv* tyenv, IRStmtVec* stmts, IRStmt* st,
                                                st->Ist.Exit.dst,
                                                st->Ist.Exit.offsIP));
          break;
-      case Ist_IfThenElse:
-         e1 = flatten_Expr(tyenv, stmts, st->Ist.IfThenElse.cond);
-         addStmtToIRStmtVec(
-                  stmts, IRStmt_IfThenElse(e1,
-                  flatten_IRStmtVec(tyenv, st->Ist.IfThenElse.then_leg, parent),
-                  flatten_IRStmtVec(tyenv, st->Ist.IfThenElse.else_leg, parent),
-                  st->Ist.IfThenElse.phi_nodes));
+      case Ist_IfThenElse: {
+         IRIfThenElse* ite = st->Ist.IfThenElse.details;
+         e1 = flatten_Expr(tyenv, stmts, ite->cond);
+         addStmtToIRStmtVec(stmts,
+                            IRStmt_IfThenElse(e1, ite->hint,
+                               flatten_IRStmtVec(tyenv, ite->then_leg, parent),
+                               flatten_IRStmtVec(tyenv, ite->else_leg, parent),
+                               ite->phi_nodes));
          break;
+      }
       default:
          vex_printf("\n");
          ppIRStmt(st, tyenv, 0); 
@@ -720,8 +722,9 @@ void redundant_get_removal_IRStmtVec(const IRTypeEnv* tyenv, IRStmtVec* stmts)
 
       if (st->tag == Ist_IfThenElse) {
          /* Consider "then" and "else" legs in isolation. */
-         redundant_get_removal_IRStmtVec(tyenv, st->Ist.IfThenElse.then_leg);
-         redundant_get_removal_IRStmtVec(tyenv, st->Ist.IfThenElse.else_leg);
+         IRIfThenElse* ite = st->Ist.IfThenElse.details;
+         redundant_get_removal_IRStmtVec(tyenv, ite->then_leg);
+         redundant_get_removal_IRStmtVec(tyenv, ite->else_leg);
       }
 
    } /* for (UInt i = 0; i < stmts->stmts_used; i++) */
@@ -1009,10 +1012,11 @@ static void redundant_put_removal_IRStmtVec(
 
       /* Consider "then" and "else" legs in isolation. They get a new env. */
       if (st->tag == Ist_IfThenElse) {
-         redundant_put_removal_IRStmtVec(tyenv, st->Ist.IfThenElse.then_leg,
-                                         preciseMemExnsFn, pxControl, newHHW());
-         redundant_put_removal_IRStmtVec(tyenv, st->Ist.IfThenElse.else_leg,
-                                         preciseMemExnsFn, pxControl, newHHW());
+         IRIfThenElse* ite = st->Ist.IfThenElse.details;
+         redundant_put_removal_IRStmtVec(tyenv, ite->then_leg, preciseMemExnsFn,
+                                         pxControl, newHHW());
+         redundant_put_removal_IRStmtVec(tyenv, ite->else_leg, preciseMemExnsFn,
+                                         pxControl, newHHW());
       }
    }
 }
@@ -2862,9 +2866,9 @@ static IRStmt* subst_and_fold_Stmt(SubstEnv* env, IRStmt* st)
       }
 
       case Ist_IfThenElse: {
-         vassert(isIRAtom(st->Ist.IfThenElse.cond));
-         IRExpr *fcond = fold_Expr(env,
-                                   subst_Expr(env, st->Ist.IfThenElse.cond));
+         IRIfThenElse* ite = st->Ist.IfThenElse.details;
+         vassert(isIRAtom(ite->cond));
+         IRExpr *fcond = fold_Expr(env, subst_Expr(env, ite->cond));
          if (fcond->tag == Iex_Const) {
             /* Interesting. The condition on this "if-then-else" has folded down
                to a constant. */
@@ -2890,22 +2894,18 @@ static IRStmt* subst_and_fold_Stmt(SubstEnv* env, IRStmt* st)
             vpanic("IfThenElse leg lifting unimplemented");
          }
 
-         SubstEnv* then_env
-             = newSubstEnv(env->tyenv, st->Ist.IfThenElse.then_leg, env);
-         IRStmtVec* then_stmts
-             = subst_and_fold_Stmts(then_env, st->Ist.IfThenElse.then_leg);
+         SubstEnv* then_env = newSubstEnv(env->tyenv, ite->then_leg, env);
+         IRStmtVec* then_stmts = subst_and_fold_Stmts(then_env, ite->then_leg);
          subst_and_fold_PhiNodes(then_env, then_stmts, True /* srcThen */,
-                                 st->Ist.IfThenElse.phi_nodes);
+                                 ite->phi_nodes);
 
-         SubstEnv* else_env
-             = newSubstEnv(env->tyenv, st->Ist.IfThenElse.else_leg, env);
-         IRStmtVec* else_stmts
-             = subst_and_fold_Stmts(else_env, st->Ist.IfThenElse.else_leg);
+         SubstEnv* else_env = newSubstEnv(env->tyenv, ite->else_leg, env);
+         IRStmtVec* else_stmts = subst_and_fold_Stmts(else_env, ite->else_leg);
          subst_and_fold_PhiNodes(else_env, else_stmts, False /* srcThen */,
-                                 st->Ist.IfThenElse.phi_nodes);
+                                 ite->phi_nodes);
 
-         return IRStmt_IfThenElse(fcond, then_stmts, else_stmts,
-                                  st->Ist.IfThenElse.phi_nodes);
+         return IRStmt_IfThenElse(fcond, ite->hint, then_stmts, else_stmts,
+                                  ite->phi_nodes);
       }
 
    default:
@@ -3214,11 +3214,11 @@ static void addUses_Stmt ( Bool* set, IRStmt* st )
          addUses_Expr(set, st->Ist.Exit.guard);
          return;
       case Ist_IfThenElse: {
-         addUses_Expr(set, st->Ist.IfThenElse.cond);
+         IRIfThenElse* ite = st->Ist.IfThenElse.details;
+         addUses_Expr(set, ite->cond);
 
-         IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
-         for (UInt i = 0; i < phi_nodes->phis_used; i++) {
-            const IRPhi* phi = phi_nodes->phis[i];
+         for (UInt i = 0; i < ite->phi_nodes->phis_used; i++) {
+            const IRPhi* phi = ite->phi_nodes->phis[i];
             addUses_Temp(set, phi->srcThen);
             addUses_Temp(set, phi->srcElse);
          }
@@ -3226,10 +3226,8 @@ static void addUses_Stmt ( Bool* set, IRStmt* st )
          Int i_unconditional_exit; // TODO-JIT: unused at the moment
          /* Consider both legs simultaneously. If either of them reports an 
             IRTemp in use, then it won't be eliminated. */
-         do_deadcode_IRStmtVec(set, st->Ist.IfThenElse.then_leg,
-                               &i_unconditional_exit);
-         do_deadcode_IRStmtVec(set, st->Ist.IfThenElse.else_leg,
-                               &i_unconditional_exit);
+         do_deadcode_IRStmtVec(set, ite->then_leg, &i_unconditional_exit);
+         do_deadcode_IRStmtVec(set, ite->else_leg, &i_unconditional_exit);
          return;
       }
       default:
@@ -3357,8 +3355,9 @@ static void spec_helpers_IRStmtVec(
       IRStmt* st = stmts->stmts[i];
 
       if (st->tag == Ist_IfThenElse) {
-         spec_helpers_IRStmtVec(st->Ist.IfThenElse.then_leg, specHelper, any);
-         spec_helpers_IRStmtVec(st->Ist.IfThenElse.else_leg, specHelper, any);
+         IRIfThenElse* ite = st->Ist.IfThenElse.details;
+         spec_helpers_IRStmtVec(ite->then_leg, specHelper, any);
+         spec_helpers_IRStmtVec(ite->else_leg, specHelper, any);
          continue;
       }
 
@@ -4103,12 +4102,15 @@ static Bool do_cse_IRStmtVec(const IRTypeEnv* tyenv, IRStmtVec* stmts,
          case Ist_NoOp: case Ist_IMark: case Ist_AbiHint: 
          case Ist_WrTmp: case Ist_Exit: case Ist_LoadG:
             paranoia = 0; break;
-         case Ist_IfThenElse:
-            anyDone |= do_cse_IRStmtVec(tyenv, st->Ist.IfThenElse.then_leg,
+         case Ist_IfThenElse: {
+            IRIfThenElse* ite = st->Ist.IfThenElse.details;
+            anyDone |= do_cse_IRStmtVec(tyenv, ite->then_leg,
                                         allowLoadsToBeCSEd);
-            anyDone |= do_cse_IRStmtVec(tyenv, st->Ist.IfThenElse.else_leg,
+            anyDone |= do_cse_IRStmtVec(tyenv, ite->else_leg,
                                         allowLoadsToBeCSEd);
-            paranoia = 0; break;
+            paranoia = 0;
+            break;
+         }
          default: 
             vpanic("do_cse_IRStmtVec(1)");
       }
@@ -4399,8 +4401,9 @@ static void collapse_AddSub_chains_IRStmtVec(IRStmtVec* stmts)
       }
 
       if (st->tag == Ist_IfThenElse) {
-         collapse_AddSub_chains_IRStmtVec(st->Ist.IfThenElse.then_leg);
-         collapse_AddSub_chains_IRStmtVec(st->Ist.IfThenElse.else_leg);
+         IRIfThenElse* ite = st->Ist.IfThenElse.details;
+         collapse_AddSub_chains_IRStmtVec(ite->then_leg);
+         collapse_AddSub_chains_IRStmtVec(ite->else_leg);
       }
    } /* for */
 }
@@ -4675,8 +4678,9 @@ void do_redundant_GetI_elimination(const IRTypeEnv* tyenv, IRStmtVec* stmts)
       }
 
       if (st->tag == Ist_IfThenElse) {
-         do_redundant_GetI_elimination(tyenv, st->Ist.IfThenElse.then_leg);
-         do_redundant_GetI_elimination(tyenv, st->Ist.IfThenElse.else_leg);
+         IRIfThenElse* ite = st->Ist.IfThenElse.details;
+         do_redundant_GetI_elimination(tyenv, ite->then_leg);
+         do_redundant_GetI_elimination(tyenv, ite->else_leg);
       }
    }
 }
@@ -4695,10 +4699,9 @@ void do_redundant_PutI_elimination(const IRTypeEnv* tyenv, IRStmtVec* stmts,
       IRStmt* st = stmts->stmts[i];
 
       if (st->tag == Ist_IfThenElse) {
-         do_redundant_PutI_elimination(tyenv, st->Ist.IfThenElse.then_leg,
-                                       pxControl);
-         do_redundant_PutI_elimination(tyenv, st->Ist.IfThenElse.else_leg,
-                                       pxControl);
+         IRIfThenElse* ite = st->Ist.IfThenElse.details;
+         do_redundant_PutI_elimination(tyenv, ite->then_leg, pxControl);
+         do_redundant_PutI_elimination(tyenv, ite->else_leg, pxControl);
       }
 
       if (st->tag != Ist_PutI)
@@ -4898,19 +4901,18 @@ static void deltaIRStmt(IRTypeEnv* tyenv, IRStmtVec* stmts, IRStmt* st,
             deltaIRExpr(d->mAddr, delta_tmp);
          break;
       case Ist_IfThenElse: {
-         deltaIRExpr(st->Ist.IfThenElse.cond, delta_tmp);
+         IRIfThenElse* ite = st->Ist.IfThenElse.details;
+         deltaIRExpr(ite->cond, delta_tmp);
          /* Traverse "then" and "else" legs. Also nested IRStmtVec's need to
             be unrolled otherwise the main IRStmtVec will break horribly. */
-         deltaIRStmtVec(tyenv, st->Ist.IfThenElse.then_leg, delta_tmp,
-                        delta_id, stmts);
-         deltaIRStmtVec(tyenv, st->Ist.IfThenElse.else_leg, delta_tmp,
-                        delta_id, stmts);
+         deltaIRStmtVec(tyenv, ite->then_leg, delta_tmp, delta_id, stmts);
+         deltaIRStmtVec(tyenv, ite->else_leg, delta_tmp, delta_id, stmts);
 
-         IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
-         for (UInt i = 0; i < phi_nodes->phis_used; i++) {
-            phi_nodes->phis[i]->dst     += delta_tmp;
-            phi_nodes->phis[i]->srcThen += delta_tmp;
-            phi_nodes->phis[i]->srcElse += delta_tmp;
+         for (UInt i = 0; i < ite->phi_nodes->phis_used; i++) {
+            IRPhi* phi = ite->phi_nodes->phis[i];
+            phi->dst     += delta_tmp;
+            phi->srcThen += delta_tmp;
+            phi->srcElse += delta_tmp;
          }
          break;
       }
@@ -5493,15 +5495,14 @@ static void aoccCount_Stmt(UShort uses[], const IRStmt* st, Bool* max_ga_known,
          aoccCount_Expr(uses, st->Ist.Exit.guard);
          return;
       case Ist_IfThenElse: {
-         aoccCount_Expr(uses, st->Ist.IfThenElse.cond);
-         aoccCount_IRStmtVec(uses, st->Ist.IfThenElse.then_leg,
-                             max_ga_known, max_ga);
-         aoccCount_IRStmtVec(uses, st->Ist.IfThenElse.else_leg,
-                             max_ga_known, max_ga);
-         IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
-         for (UInt i = 0; i < phi_nodes->phis_used; i++) {
-            uses[phi_nodes->phis[i]->srcThen]++;
-            uses[phi_nodes->phis[i]->srcElse]++;
+         IRIfThenElse* ite = st->Ist.IfThenElse.details;
+         aoccCount_Expr(uses, ite->cond);
+         aoccCount_IRStmtVec(uses, ite->then_leg, max_ga_known, max_ga);
+         aoccCount_IRStmtVec(uses, ite->else_leg, max_ga_known, max_ga);
+         for (UInt i = 0; i < ite->phi_nodes->phis_used; i++) {
+            IRPhi* phi = ite->phi_nodes->phis[i];
+            uses[phi->srcThen]++;
+            uses[phi->srcElse]++;
          }
          return;
       }
@@ -5918,19 +5919,18 @@ static IRStmt* atbSubst_Stmt(const IRTypeEnv* tyenv, ATmpInfo* env, IRStmt* st,
          }
          return IRStmt_Dirty(d2);
       case Ist_IfThenElse: {
+         IRIfThenElse* ite = st->Ist.IfThenElse.details;
          ATmpInfo then_env[A_NENV];
          initAEnv(then_env, env);
-         IRStmtVec* then_leg
-            = atbSubst_StmtVec(tyenv, then_env, st->Ist.IfThenElse.then_leg,
-                               preciseMemExnsFn, pxControl, uses);
+         IRStmtVec* then_leg = atbSubst_StmtVec(tyenv, then_env, ite->then_leg,
+                                             preciseMemExnsFn, pxControl, uses);
 
          ATmpInfo else_env[A_NENV];
          initAEnv(else_env, env);
-         IRStmtVec* else_leg
-            = atbSubst_StmtVec(tyenv, else_env, st->Ist.IfThenElse.else_leg,
-                               preciseMemExnsFn, pxControl, uses);
+         IRStmtVec* else_leg = atbSubst_StmtVec(tyenv, else_env, ite->else_leg,
+                                             preciseMemExnsFn, pxControl, uses);
 
-         const IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
+         const IRPhiVec* phi_nodes = ite->phi_nodes;
          IRPhiVec* out = emptyIRPhiVec();
          for (UInt i = 0; i < phi_nodes->phis_used; i++) {
             IRPhi* phi = phi_nodes->phis[i];
@@ -5953,7 +5953,7 @@ static IRStmt* atbSubst_Stmt(const IRTypeEnv* tyenv, ATmpInfo* env, IRStmt* st,
             }
          }
 
-         return IRStmt_IfThenElse(atbSubst_Expr(env, st->Ist.IfThenElse.cond),
+         return IRStmt_IfThenElse(atbSubst_Expr(env, ite->cond), ite->hint,
                                   then_leg, else_leg, out);
       }
       default: 
@@ -6309,11 +6309,11 @@ static void deconstruct_phi_nodes_IRStmtVec(IRStmtVec* stmts)
          continue;
       }
 
-      IRStmtVec* then_leg = st->Ist.IfThenElse.then_leg;
-      IRStmtVec* else_leg = st->Ist.IfThenElse.else_leg;
-      IRPhiVec* phi_nodes = st->Ist.IfThenElse.phi_nodes;
-      for (UInt j = 0; j < phi_nodes->phis_used; j++) {
-         const IRPhi* phi = phi_nodes->phis[j];
+      IRIfThenElse* ite = st->Ist.IfThenElse.details;
+      IRStmtVec* then_leg = ite->then_leg;
+      IRStmtVec* else_leg = ite->else_leg;
+      for (UInt j = 0; j < ite->phi_nodes->phis_used; j++) {
+         const IRPhi* phi = ite->phi_nodes->phis[j];
          addStmtToIRStmtVec(then_leg, IRStmt_WrTmp(phi->dst,
                                                    IRExpr_RdTmp(phi->srcThen)));
          addStmtToIRStmtVec(else_leg, IRStmt_WrTmp(phi->dst,
@@ -6719,13 +6719,13 @@ static Bool do_XOR_TRANSFORM_IRStmtVec(IRTypeEnv* tyenv, IRStmtVec* stmts)
          case Ist_Exit:
             vassert(isIRAtom(st->Ist.Exit.guard));
             break;
-         case Ist_IfThenElse:
-            vassert(isIRAtom(st->Ist.IfThenElse.cond));
-            changed |= do_XOR_TRANSFORM_IRStmtVec(tyenv,
-                                                  st->Ist.IfThenElse.then_leg);
-            changed |= do_XOR_TRANSFORM_IRStmtVec(tyenv,
-                                                  st->Ist.IfThenElse.else_leg);
+         case Ist_IfThenElse: {
+            IRIfThenElse* ite = st->Ist.IfThenElse.details;
+            vassert(isIRAtom(ite->cond));
+            changed |= do_XOR_TRANSFORM_IRStmtVec(tyenv, ite->then_leg);
+            changed |= do_XOR_TRANSFORM_IRStmtVec(tyenv, ite->else_leg);
             break;
+         }
          default:
             vex_printf("\n"); ppIRStmt(st, tyenv, 0);
             vpanic("do_XOR_TRANSFORMS_IRStmtVec");
@@ -6937,13 +6937,15 @@ static void considerExpensives_IRStmtVec(/*OUT*/Bool* hasGetIorPutI,
          case Ist_Exit:
             vassert(isIRAtom(st->Ist.Exit.guard));
             break;
-         case Ist_IfThenElse:
-            vassert(isIRAtom(st->Ist.IfThenElse.cond));
+         case Ist_IfThenElse: {
+            IRIfThenElse* ite = st->Ist.IfThenElse.details;
+            vassert(isIRAtom(ite->cond));
             considerExpensives_IRStmtVec(hasGetIorPutI, hasVorFtemps,
-                                         tyenv, st->Ist.IfThenElse.then_leg);
+                                         tyenv, ite->then_leg);
             considerExpensives_IRStmtVec(hasGetIorPutI, hasVorFtemps,
-                                         tyenv, st->Ist.IfThenElse.else_leg);
+                                         tyenv, ite->else_leg);
             break;
+         }
          default: 
          bad:
             ppIRStmt(st, tyenv, 0);
