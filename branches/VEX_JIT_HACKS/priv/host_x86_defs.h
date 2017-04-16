@@ -388,7 +388,8 @@ typedef
       Xin_SseCMov,   /* SSE conditional move */
       Xin_SseShuf,   /* SSE2 shuffle (pshufd) */
       Xin_EvCheck,   /* Event check */
-      Xin_ProfInc    /* 64-bit profile counter increment */
+      Xin_ProfInc,   /* 64-bit profile counter increment */
+      Xin_IfThenElse /* HInstrIfThenElse */
    }
    X86InstrTag;
 
@@ -652,6 +653,9 @@ typedef
                installed later, post-translation, by patching it in,
                as it is not known at translation time. */
          } ProfInc;
+         struct {
+            HInstrIfThenElse* hite;
+         } IfThenElse;
 
       } Xin;
    }
@@ -717,6 +721,7 @@ extern void ppX86Instr ( const X86Instr*, Bool );
 extern void         getRegUsage_X86Instr ( HRegUsage*, const X86Instr*, Bool );
 extern void         mapRegs_X86Instr     ( HRegRemap*, X86Instr*, Bool );
 extern Bool         isMove_X86Instr      ( const X86Instr*, HReg*, HReg* );
+extern HInstrIfThenElse* isIfThenElse_X86Instr(X86Instr*);
 extern Int          emit_X86Instr   ( /*MB_MOD*/Bool* is_profInc,
                                       UChar* buf, Int nbuf, const X86Instr* i, 
                                       Bool mode64,
@@ -735,7 +740,7 @@ extern X86Instr* directReload_X86 ( X86Instr* i, HReg vreg, Short spill_off );
 
 extern const RRegUniverse* getRRegUniverse_X86 ( void );
 
-extern HInstrArray* iselSB_X86           ( const IRSB*,
+extern HInstrSB* iselSB_X86              ( const IRSB*,
                                            VexArch,
                                            const VexArchInfo*,
                                            const VexAbiInfo*,

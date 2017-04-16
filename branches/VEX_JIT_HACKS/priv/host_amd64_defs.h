@@ -804,7 +804,7 @@ extern void genReload_AMD64 ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
 
 extern const RRegUniverse* getRRegUniverse_AMD64 ( void );
 
-extern HInstrArray* iselSB_AMD64           ( const IRSB*, 
+extern HInstrSB* iselSB_AMD64              ( const IRSB*, 
                                              VexArch,
                                              const VexArchInfo*,
                                              const VexAbiInfo*,

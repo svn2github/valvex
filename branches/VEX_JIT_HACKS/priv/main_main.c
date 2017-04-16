@@ -326,12 +326,13 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
    Bool         (*isMove)       ( const HInstr*, HReg*, HReg* );
    void         (*getRegUsage)  ( HRegUsage*, const HInstr*, Bool );
    void         (*mapRegs)      ( HRegRemap*, HInstr*, Bool );
+   HInstrIfThenElse* (*isIfThenElse)(const HInstr*);
    void         (*genSpill)     ( HInstr**, HInstr**, HReg, Int, Bool );
    void         (*genReload)    ( HInstr**, HInstr**, HReg, Int, Bool );
    HInstr*      (*directReload) ( HInstr*, HReg, Short );
    void         (*ppInstr)      ( const HInstr*, Bool );
    void         (*ppReg)        ( HReg );
-   HInstrArray* (*iselSB)       ( const IRSB*, VexArch, const VexArchInfo*,
+   HInstrSB*    (*iselSB)       ( const IRSB*, VexArch, const VexArchInfo*,
                                   const VexAbiInfo*, Int, Int, Bool, Bool,
                                   Addr );
    Int          (*emit)         ( /*MB_MOD*/Bool*,
@@ -347,9 +348,9 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
 
    VexGuestLayout* guest_layout;
    IRSB*           irsb;
-   HInstrArray*    vcode;
-   HInstrArray*    rcode;
-   Int             i, j, k, out_used, guest_sizeB;
+   HInstrSB*       vcode;
+   HInstrSB*       rcode;
+   Int             out_used, guest_sizeB;
    Int             offB_CMSTART, offB_CMLEN, offB_GUEST_IP, szB_GUEST_IP;
    Int             offB_HOST_EvC_COUNTER, offB_HOST_EvC_FAILADDR;
    UChar           insn_bytes[128];
@@ -413,6 +414,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
          getRegUsage  
             = (__typeof__(getRegUsage)) X86FN(getRegUsage_X86Instr);
          mapRegs      = (__typeof__(mapRegs)) X86FN(mapRegs_X86Instr);
+         isIfThenElse = (__typeof__(isIfThenElse)) X86FN(isIfThenElse_X86Instr);
          genSpill     = (__typeof__(genSpill)) X86FN(genSpill_X86);
          genReload    = (__typeof__(genReload)) X86FN(genReload_X86);
          directReload = (__typeof__(directReload)) X86FN(directReload_X86);
@@ -878,7 +880,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
 
    vassert(vta->guest_extents->n_used >= 1 && vta->guest_extents->n_used <= 3);
    vassert(vta->guest_extents->base[0] == vta->guest_bytes_addr);
-   for (i = 0; i < vta->guest_extents->n_used; i++) {
+   for (UInt i = 0; i < vta->guest_extents->n_used; i++) {
       vassert(vta->guest_extents->len[i] < 10000); /* sanity */
    }
 
@@ -897,7 +899,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
          UInt   guest_bytes_read = (UInt)vta->guest_extents->len[0];
          vex_printf("GuestBytes %lx %u ", vta->guest_bytes_addr, 
                                           guest_bytes_read );
-         for (i = 0; i < guest_bytes_read; i++) {
+         for (UInt i = 0; i < guest_bytes_read; i++) {
             UInt b = (UInt)p[i];
             vex_printf(" %02x", b );
             sum = (sum << 1) ^ b;
@@ -1042,17 +1044,13 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
       vex_printf("\n");
 
    if (vex_traceflags & VEX_TRACE_VCODE) {
-      for (i = 0; i < vcode->arr_used; i++) {
-         vex_printf("%3d   ", i);
-         ppInstr(vcode->arr[i], mode64);
-         vex_printf("\n");
-      }
+      ppHInstrSB(vcode, isIfThenElse, ppInstr, mode64);
       vex_printf("\n");
    }
 
    /* Register allocate. */
    rcode = doRegisterAllocation ( vcode, rRegUniv,
-                                  isMove, getRegUsage, mapRegs, 
+                                  isMove, getRegUsage, mapRegs, isIfThenElse,
                                   genSpill, genReload, directReload, 
                                   guest_sizeB,
                                   ppInstr, ppReg, mode64 );
@@ -1063,11 +1061,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
       vex_printf("\n------------------------" 
                    " Register-allocated code "
                    "------------------------\n\n");
-      for (i = 0; i < rcode->arr_used; i++) {
-         vex_printf("%3d   ", i);
-         ppInstr(rcode->arr[i], mode64);
-         vex_printf("\n");
-      }
+      ppHInstrSB(rcode, isIfThenElse, ppInstr, mode64);
       vex_printf("\n");
    }
 
@@ -1086,22 +1080,25 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
    }
 
    out_used = 0; /* tracks along the host_bytes array */
-   for (i = 0; i < rcode->arr_used; i++) {
-      HInstr* hi           = rcode->arr[i];
+   /* TODO-JIT: This needs another interface when assembler/flattener
+                is given whole HInstrSB and also pointer to function
+                which prints emitted bytes. */
+   for (UInt i = 0; i < rcode->insns->insns_used; i++) {
+      HInstr* hi           = rcode->insns->insns[i];
       Bool    hi_isProfInc = False;
       if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM)) {
          ppInstr(hi, mode64);
          vex_printf("\n");
       }
-      j = emit( &hi_isProfInc,
-                insn_bytes, sizeof insn_bytes, hi,
-                mode64, vta->archinfo_host.endness,
-                vta->disp_cp_chain_me_to_slowEP,
-                vta->disp_cp_chain_me_to_fastEP,
-                vta->disp_cp_xindir,
-                vta->disp_cp_xassisted );
+      Int j = emit(&hi_isProfInc,
+                   insn_bytes, sizeof insn_bytes, hi,
+                   mode64, vta->archinfo_host.endness,
+                   vta->disp_cp_chain_me_to_slowEP,
+                   vta->disp_cp_chain_me_to_fastEP,
+                   vta->disp_cp_xindir,
+                   vta->disp_cp_xassisted);
       if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM)) {
-         for (k = 0; k < j; k++)
+         for (Int k = 0; k < j; k++)
             vex_printf("%02x ", (UInt)insn_bytes[k]);
          vex_printf("\n\n");
       }
@@ -1118,7 +1115,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
          res.offs_profInc = out_used;
       }
       { UChar* dst = &vta->host_bytes[out_used];
-        for (k = 0; k < j; k++) {
+        for (Int k = 0; k < j; k++) {
            dst[k] = insn_bytes[k];
         }
         out_used += j;
@@ -1132,8 +1129,8 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
 
    if (vex_traceflags) {
       /* Print the expansion ratio for this SB. */
-      j = 0; /* total guest bytes */
-      for (i = 0; i < vta->guest_extents->n_used; i++) {
+      UInt j = 0; /* total guest bytes */
+      for (UInt i = 0; i < vta->guest_extents->n_used; i++) {
          j += vta->guest_extents->len[i];
       }
       if (1) vex_printf("VexExpansionRatio %d %d   %d :10\n\n",

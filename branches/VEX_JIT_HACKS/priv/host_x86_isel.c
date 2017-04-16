@@ -185,7 +185,7 @@ typedef
       Addr32       max_ga;
 
       /* These are modified as we go along. */
-      HInstrArray* code;
+      HInstrSB*    code;
       Int          vreg_ctr;
    }
    ISelEnv;
@@ -209,7 +209,7 @@ static void lookupIRTemp64 ( HReg* vrHI, HReg* vrLO, ISelEnv* env, IRTemp tmp )
 
 static void addInstr ( ISelEnv* env, X86Instr* instr )
 {
-   addHInstr(env->code, instr);
+   addHInstr(env->code->insns, instr);
    if (vex_traceflags & VEX_TRACE_VCODE) {
       ppX86Instr(instr, False);
       vex_printf("\n");
@@ -4420,7 +4420,7 @@ static void iselNext ( ISelEnv* env,
 
 /* Translate an entire SB to x86 code. */
 
-HInstrArray* iselSB_X86 ( const IRSB* bb,
+HInstrSB* iselSB_X86    ( const IRSB* bb,
                           VexArch      arch_host,
                           const VexArchInfo* archinfo_host,
                           const VexAbiInfo*  vbi/*UNUSED*/,
@@ -4453,7 +4453,7 @@ HInstrArray* iselSB_X86 ( const IRSB* bb,
    env->vreg_ctr = 0;
 
    /* Set up output code array. */
-   env->code = newHInstrArray();
+   env->code = newHInstrSB();
 
    /* Copy BB's type env. */
    /* TODO-JIT: Currently works only with no if-then-else statements. */

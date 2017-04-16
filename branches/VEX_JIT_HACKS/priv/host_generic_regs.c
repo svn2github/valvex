@@ -282,28 +282,70 @@ HReg lookupHRegRemap ( HRegRemap* map, HReg orig )
 /*--- Abstract instructions                             ---*/
 /*---------------------------------------------------------*/
 
-HInstrArray* newHInstrArray ( void )
+HInstrVec* newHInstrVec(void)
 {
-   HInstrArray* ha = LibVEX_Alloc_inline(sizeof(HInstrArray));
-   ha->arr_size = 4;
-   ha->arr_used = 0;
-   ha->arr      = LibVEX_Alloc_inline(ha->arr_size * sizeof(HInstr*));
-   ha->n_vregs  = 0;
-   return ha;
+   HInstrVec* hv  = LibVEX_Alloc_inline(sizeof(HInstrVec));
+   hv->insns_size = 4;
+   hv->insns_used = 0;
+   hv->insns      = LibVEX_Alloc_inline(hv->insns_size * sizeof(HInstr*));
+   return hv;
 }
 
 __attribute__((noinline))
-void addHInstr_SLOW ( HInstrArray* ha, HInstr* instr )
+void addHInstr_SLOW(HInstrVec* hv, HInstr* instr)
 {
-   vassert(ha->arr_used == ha->arr_size);
-   Int      i;
-   HInstr** arr2 = LibVEX_Alloc_inline(ha->arr_size * 2 * sizeof(HInstr*));
-   for (i = 0; i < ha->arr_size; i++) {
-      arr2[i] = ha->arr[i];
+   vassert(hv->insns_used == hv->insns_size);
+   HInstr** insns2 = LibVEX_Alloc_inline(hv->insns_size * 2 * sizeof(HInstr*));
+   for (UInt i = 0; i < hv->insns_size; i++) {
+      insns2[i] = hv->insns[i];
    }
-   ha->arr_size *= 2;
-   ha->arr = arr2;
-   addHInstr(ha, instr);
+   hv->insns_size *= 2;
+   hv->insns = insns2;
+   addHInstr(hv, instr);
+}
+
+static void print_depth(UInt depth) {
+   for (UInt i = 0; i < depth; i++) {
+      vex_printf("    ");
+   }
+}
+
+static void ppHInstrVec(const HInstrVec* code,
+                        HInstrIfThenElse* (*isIfThenElse)(const HInstr*),
+                        void (*ppInstr)(const HInstr*, Bool),
+                        Bool mode64, UInt depth, UInt *insn_num)
+{
+   for (UInt i = 0; i < code->insns_used; i++) {
+      const HInstr* instr = code->insns[i];
+      const HInstrIfThenElse* hite = isIfThenElse(instr);
+      if (UNLIKELY(hite != NULL)) {
+         ppHInstrVec(hite->fallThrough, isIfThenElse, ppInstr, mode64,
+                     depth + 1, insn_num);
+         ppHInstrVec(hite->outOfLine, isIfThenElse, ppInstr, mode64,
+                     depth + 1, insn_num);
+      } else {
+         vex_printf("%3u   ", (*insn_num)++);
+         print_depth(depth);
+         ppInstr(instr, mode64);
+         vex_printf("\n");
+      }
+   }
+}
+
+HInstrSB* newHInstrSB(void)
+{
+   HInstrSB* hsb = LibVEX_Alloc_inline(sizeof(HInstrSB));
+   hsb->insns    = newHInstrVec();
+   hsb->n_vregs  = 0;
+   return hsb;
+}
+
+void ppHInstrSB(const HInstrSB* code,
+                HInstrIfThenElse* (*isIfThenElse)(const HInstr*),
+                void (*ppInstr)(const HInstr*, Bool), Bool mode64)
+{
+   UInt insn_num = 0;
+   ppHInstrVec(code->insns, isIfThenElse, ppInstr, mode64, 0, &insn_num);
 }
 
 

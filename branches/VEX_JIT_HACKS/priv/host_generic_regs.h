@@ -338,40 +338,64 @@ static inline void initHRegRemap ( HRegRemap* map )
 /* A type is needed to refer to pointers to instructions of any
    target.  Defining it like this means that HInstr* can stand in for
    X86Instr*, ArmInstr*, etc. */
-
 typedef  void  HInstr;
 
 
-/* An expandable array of HInstr*'s.  Handy for insn selection and
-   register allocation.  n_vregs indicates the number of virtual
-   registers mentioned in the code, something that reg-alloc needs to
-   know.  These are required to be numbered 0 .. n_vregs-1. 
-*/
+/* An expandable vector of HInstr*'s.  Handy for insn selection and
+   register allocation. */
 typedef
    struct {
-      HInstr** arr;
-      Int      arr_size;
-      Int      arr_used;
-      Int      n_vregs;
+      HInstr** insns;
+      UInt     insns_size;
+      UInt     insns_used;
    }
-   HInstrArray;
+   HInstrVec;
 
-extern HInstrArray* newHInstrArray ( void );
+extern HInstrVec* newHInstrVec(void);
 
 /* Never call this directly.  It's the slow and incomplete path for
    addHInstr. */
 __attribute__((noinline))
-extern void addHInstr_SLOW ( HInstrArray*, HInstr* );
+extern void addHInstr_SLOW(HInstrVec*, HInstr*);
 
-static inline void addHInstr ( HInstrArray* ha, HInstr* instr )
+static inline void addHInstr(HInstrVec* ha, HInstr* instr)
 {
-   if (LIKELY(ha->arr_used < ha->arr_size)) {
-      ha->arr[ha->arr_used] = instr;
-      ha->arr_used++;
+   if (LIKELY(ha->insns_used < ha->insns_size)) {
+      ha->insns[ha->insns_used] = instr;
+      ha->insns_used++;
    } else {
       addHInstr_SLOW(ha, instr);
    }
 }
+
+
+/* Represents two alternative code paths:
+   - one more likely taken (hot path)
+   - one not so likely taken (cold path) */
+typedef
+   struct {
+      // HCondCode ccOOL;       // TODO-JIT: condition code for the OOL branch
+      HInstrVec* fallThrough;   // generated from the likely-taken IR
+      HInstrVec* outOfLine;     // generated from likely-not-taken IR
+   }
+   HInstrIfThenElse;
+
+
+/* Code block of HInstr's.
+   n_vregs indicates the number of virtual registers mentioned in the code,
+   something that reg-alloc needs to know. These are required to be
+   numbered 0 .. n_vregs-1. */
+typedef
+   struct {
+      HInstrVec* insns;
+      UInt       n_vregs;
+   }
+   HInstrSB;
+
+extern HInstrSB* newHInstrSB(void);
+extern void ppHInstrSB(const HInstrSB* code,
+                       HInstrIfThenElse* (*isIfThenElse)(const HInstr*),
+                       void (*ppInstr)(const HInstr*, Bool), Bool mode64);
 
 
 /*---------------------------------------------------------*/
@@ -443,10 +467,10 @@ static inline Bool is_RetLoc_INVALID ( RetLoc rl ) {
 /*---------------------------------------------------------*/
 
 extern
-HInstrArray* doRegisterAllocation (
+HInstrSB* doRegisterAllocation (
 
    /* Incoming virtual-registerised code. */ 
-   HInstrArray* instrs_in,
+   HInstrSB* sb_in,
 
    /* The real-register universe to use.  This contains facts about
       real registers, one of which is the set of registers available
@@ -462,6 +486,10 @@ HInstrArray* doRegisterAllocation (
 
    /* Apply a reg-reg mapping to an insn. */
    void (*mapRegs) (HRegRemap*, HInstr*, Bool),
+
+   /* Is this instruction actually HInstrIfThenElse? Returns pointer to
+      HInstrIfThenElse if yes, NULL otherwise. */
+   HInstrIfThenElse* (*isIfThenElse) (const HInstr*),
 
    /* Return insn(s) to spill/restore a real reg to a spill slot
       offset.  And optionally a function to do direct reloads. */

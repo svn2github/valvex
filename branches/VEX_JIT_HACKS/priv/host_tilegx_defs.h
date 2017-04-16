@@ -532,10 +532,10 @@ extern void genReload_TILEGX ( /*OUT*/ HInstr ** i1, /*OUT*/ HInstr ** i2,
 
 extern const RRegUniverse* getRRegUniverse_TILEGX ( void );
 
-extern HInstrArray *iselSB_TILEGX ( const IRSB*, VexArch,
-                                    const VexArchInfo*,
-                                    const VexAbiInfo*,
-                                    Int, Int, Bool, Bool, Addr);
+extern HInstrSB *iselSB_TILEGX ( const IRSB*, VexArch,
+                                 const VexArchInfo*,
+                                 const VexAbiInfo*,
+                                 Int, Int, Bool, Bool, Addr);
 extern const HChar *showTILEGXCondCode ( TILEGXCondCode cond );
 extern Int evCheckSzB_TILEGX (void);
 extern VexInvalRange chainXDirect_TILEGX ( VexEndness endness_host,

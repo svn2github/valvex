@@ -1697,6 +1697,13 @@ Bool isMove_X86Instr ( const X86Instr* i, HReg* src, HReg* dst )
    return False;
 }
 
+extern HInstrIfThenElse* isIfThenElse_X86Instr(X86Instr* i)
+{
+   if (UNLIKELY(i->tag == Xin_IfThenElse)) {
+      return i->Xin.IfThenElse.hite;
+   }
+   return NULL;
+}
 
 /* Generate x86 spill/reload instructions under the direction of the
    register allocator.  Note it's critical these don't write the
