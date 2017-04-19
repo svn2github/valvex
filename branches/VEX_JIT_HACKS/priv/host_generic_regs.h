@@ -368,18 +368,37 @@ static inline void addHInstr(HInstrVec* ha, HInstr* instr)
    }
 }
 
+/* Host-independent condition code. Stands for X86CondCode, ARM64CondCode... */
+typedef UInt HCondCode;
 
-/* Represents two alternative code paths:
-   - one more likely taken (hot path)
-   - one not so likely taken (cold path) */
+
+/* Phi node expressed in terms of HReg's. Analogy to IRPhi. */
 typedef
    struct {
-      // HCondCode ccOOL;       // TODO-JIT: condition code for the OOL branch
+      HReg dst;
+      HReg srcFallThrough;
+      HReg srcOutOfLine;
+   }
+   HPhiNode;
+
+extern void ppHPhiNode(const HPhiNode* phi_node);
+
+
+/* Represents two alternative code paths:
+   - One more likely taken (hot path)
+   - One not so likely taken (cold path) */
+typedef
+   struct {
+      HCondCode  ccOOL;         // condition code for the OOL branch
       HInstrVec* fallThrough;   // generated from the likely-taken IR
       HInstrVec* outOfLine;     // generated from likely-not-taken IR
+      HPhiNode*  phi_nodes;
+      UInt       n_phis;
    }
    HInstrIfThenElse;
 
+extern HInstrIfThenElse* newHInstrIfThenElse(HCondCode, HPhiNode* phi_nodes,
+                                             UInt n_phis);
 
 /* Code block of HInstr's.
    n_vregs indicates the number of virtual registers mentioned in the code,
@@ -395,7 +414,8 @@ typedef
 extern HInstrSB* newHInstrSB(void);
 extern void ppHInstrSB(const HInstrSB* code,
                        HInstrIfThenElse* (*isIfThenElse)(const HInstr*),
-                       void (*ppInstr)(const HInstr*, Bool), Bool mode64);
+                       void (*ppInstr)(const HInstr*, Bool),
+                       void (*ppCondCode)(HCondCode), Bool mode64);
 
 
 /*---------------------------------------------------------*/
@@ -500,6 +520,7 @@ HInstrSB* doRegisterAllocation (
 
    /* For debug printing only. */
    void (*ppInstr) ( const HInstr*, Bool ),
+   void (*ppCondCode)(HCondCode),
    void (*ppReg) ( HReg ),
 
    /* 32/64bit mode */

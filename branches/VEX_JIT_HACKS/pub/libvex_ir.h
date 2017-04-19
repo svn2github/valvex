@@ -2817,6 +2817,8 @@ typedef
    IRIfThenElse;
 
 extern void ppIRIfThenElse_Hint(IRIfThenElse_Hint hint);
+/* Pretty print only If-Then-Else preamble: condition and hint. Not the legs. */
+extern void ppIRIfThenElseCondHint(const IRIfThenElse* ite);
 extern void ppIRIfThenElse(const IRIfThenElse* ite, const IRTypeEnv* tyenv,
                            UInt depth);
 extern IRIfThenElse* mkIRIfThenElse(IRExpr* cond, IRIfThenElse_Hint hint,

@@ -331,6 +331,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
    void         (*genReload)    ( HInstr**, HInstr**, HReg, Int, Bool );
    HInstr*      (*directReload) ( HInstr*, HReg, Short );
    void         (*ppInstr)      ( const HInstr*, Bool );
+   void         (*ppCondCode)   ( HCondCode );
    void         (*ppReg)        ( HReg );
    HInstrSB*    (*iselSB)       ( const IRSB*, VexArch, const VexArchInfo*,
                                   const VexAbiInfo*, Int, Int, Bool, Bool,
@@ -367,6 +368,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
    genReload              = NULL;
    directReload           = NULL;
    ppInstr                = NULL;
+   ppCondCode             = NULL;
    ppReg                  = NULL;
    iselSB                 = NULL;
    emit                   = NULL;
@@ -419,6 +421,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
          genReload    = (__typeof__(genReload)) X86FN(genReload_X86);
          directReload = (__typeof__(directReload)) X86FN(directReload_X86);
          ppInstr      = (__typeof__(ppInstr)) X86FN(ppX86Instr);
+         ppCondCode   = (__typeof__(ppCondCode)) X86FN(ppX86CondCode);
          ppReg        = (__typeof__(ppReg)) X86FN(ppHRegX86);
          iselSB       = X86FN(iselSB_X86);
          emit         = (__typeof__(emit)) X86FN(emit_X86Instr);
@@ -1044,7 +1047,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
       vex_printf("\n");
 
    if (vex_traceflags & VEX_TRACE_VCODE) {
-      ppHInstrSB(vcode, isIfThenElse, ppInstr, mode64);
+      ppHInstrSB(vcode, isIfThenElse, ppInstr, ppCondCode, mode64);
       vex_printf("\n");
    }
 
@@ -1053,7 +1056,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
                                   isMove, getRegUsage, mapRegs, isIfThenElse,
                                   genSpill, genReload, directReload, 
                                   guest_sizeB,
-                                  ppInstr, ppReg, mode64 );
+                                  ppInstr, ppCondCode, ppReg, mode64 );
 
    vexAllocSanityCheck();
 
@@ -1061,7 +1064,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
       vex_printf("\n------------------------" 
                    " Register-allocated code "
                    "------------------------\n\n");
-      ppHInstrSB(rcode, isIfThenElse, ppInstr, mode64);
+      ppHInstrSB(rcode, isIfThenElse, ppInstr, ppCondCode, mode64);
       vex_printf("\n");
    }
 

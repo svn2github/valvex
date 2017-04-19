@@ -304,25 +304,63 @@ void addHInstr_SLOW(HInstrVec* hv, HInstr* instr)
    addHInstr(hv, instr);
 }
 
+HInstrIfThenElse* newHInstrIfThenElse(HCondCode condCode, HPhiNode* phi_nodes,
+                                      UInt n_phis)
+{
+   HInstrIfThenElse* hite = LibVEX_Alloc_inline(sizeof(HInstrIfThenElse));
+   hite->ccOOL            = condCode;
+   hite->fallThrough      = newHInstrVec();
+   hite->outOfLine        = newHInstrVec();
+   hite->phi_nodes        = phi_nodes;
+   hite->n_phis           = n_phis;
+   return hite;
+}
+
 static void print_depth(UInt depth) {
    for (UInt i = 0; i < depth; i++) {
       vex_printf("    ");
    }
 }
 
+void ppHPhiNode(const HPhiNode* phi_node)
+{
+   ppHReg(phi_node->dst);
+   vex_printf(" = phi(");
+   ppHReg(phi_node->srcFallThrough);
+   vex_printf(",");
+   ppHReg(phi_node->srcOutOfLine);
+   vex_printf(")");
+}
+
 static void ppHInstrVec(const HInstrVec* code,
                         HInstrIfThenElse* (*isIfThenElse)(const HInstr*),
                         void (*ppInstr)(const HInstr*, Bool),
+                        void (*ppCondCode)(HCondCode),
                         Bool mode64, UInt depth, UInt *insn_num)
 {
    for (UInt i = 0; i < code->insns_used; i++) {
       const HInstr* instr = code->insns[i];
       const HInstrIfThenElse* hite = isIfThenElse(instr);
       if (UNLIKELY(hite != NULL)) {
-         ppHInstrVec(hite->fallThrough, isIfThenElse, ppInstr, mode64,
-                     depth + 1, insn_num);
-         ppHInstrVec(hite->outOfLine, isIfThenElse, ppInstr, mode64,
-                     depth + 1, insn_num);
+         print_depth(depth);
+         vex_printf("      if (!");
+         ppCondCode(hite->ccOOL);
+         vex_printf(") then fall-through {\n");
+         ppHInstrVec(hite->fallThrough, isIfThenElse, ppInstr, ppCondCode,
+                     mode64, depth + 1, insn_num);
+         print_depth(depth);
+         vex_printf("      } else out-of-line {\n");
+         ppHInstrVec(hite->outOfLine, isIfThenElse, ppInstr, ppCondCode,
+                     mode64, depth + 1, insn_num);
+         print_depth(depth);
+         vex_printf("      }\n");
+
+         for (UInt j = 0; j < hite->n_phis; j++) {
+            print_depth(depth);
+            vex_printf("      ");
+            ppHPhiNode(&hite->phi_nodes[j]);
+            vex_printf("\n");
+         }
       } else {
          vex_printf("%3u   ", (*insn_num)++);
          print_depth(depth);
@@ -342,10 +380,12 @@ HInstrSB* newHInstrSB(void)
 
 void ppHInstrSB(const HInstrSB* code,
                 HInstrIfThenElse* (*isIfThenElse)(const HInstr*),
-                void (*ppInstr)(const HInstr*, Bool), Bool mode64)
+                void (*ppInstr)(const HInstr*, Bool),
+                void (*ppCondCode)(HCondCode), Bool mode64)
 {
    UInt insn_num = 0;
-   ppHInstrVec(code->insns, isIfThenElse, ppInstr, mode64, 0, &insn_num);
+   ppHInstrVec(code->insns, isIfThenElse, ppInstr, ppCondCode, mode64, 0,
+               &insn_num);
 }
 
 

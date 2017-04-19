@@ -410,6 +410,7 @@ typedef
 
       /* For debug printing only. */
       void (*ppInstr)(const HInstr*, Bool);
+      void (*ppCondCode)(HCondCode);
       void (*ppReg)(HReg);
 
       /* 32/64bit mode */
@@ -428,8 +429,8 @@ static void initRegAllocState(RegAllocState* state, const RRegUniverse* univ,
    void (*genReload)( HInstr**, HInstr**, HReg, Int, Bool),
    HInstr* (*directReload)( HInstr*, HReg, Short),
    UInt guest_sizeB,
-   void (*ppInstr)(const HInstr*, Bool), void (*ppReg)(HReg),
-   Bool mode64, const HInstrVec* instrs_in, UInt n_vregs)
+   void (*ppInstr)(const HInstr*, Bool), void (*ppCondCode)(HCondCode),
+   void (*ppReg)(HReg), Bool mode64, const HInstrVec* instrs_in, UInt n_vregs)
 {
    /* Initialize Register Allocator state. */
    state->univ         = univ;
@@ -442,6 +443,7 @@ static void initRegAllocState(RegAllocState* state, const RRegUniverse* univ,
    state->directReload = directReload;
    state->guest_sizeB  = guest_sizeB;
    state->ppInstr      = ppInstr;
+   state->ppCondCode   = ppCondCode;
    state->ppReg        = ppReg;
    state->mode64       = mode64;
 
@@ -595,7 +597,7 @@ static HInstrVec* regAlloc_HInstrVec(RegAllocState* state,
       const HInstr* instr = instrs_in->insns[ii];
 
       if (state->isIfThenElse(instr) != NULL) {
-         vpanic("IfThenElse unimplemented");
+         vpanic("regAlloc_HInstrVec: IfThenElse unimplemented");
       }
 
       state->getRegUsage(&state->reg_usage_arr[ii], instr, state->mode64);
@@ -1689,6 +1691,7 @@ HInstrSB* doRegisterAllocation (
 
    /* For debug printing only. */
    void (*ppInstr) ( const HInstr*, Bool ),
+   void (*ppCondCode)(HCondCode),
    void (*ppReg) ( HReg ),
 
    /* 32/64bit mode */
@@ -1704,7 +1707,7 @@ HInstrSB* doRegisterAllocation (
    RegAllocState state;
    initRegAllocState(&state, univ, isMove, getRegUsage, mapRegs, isIfThenElse,
                      genSpill, genReload, directReload, guest_sizeB, ppInstr,
-                     ppReg, mode64, sb_in->insns, sb_in->n_vregs);
+                     ppCondCode, ppReg, mode64, sb_in->insns, sb_in->n_vregs);
    sb_out->insns = regAlloc_HInstrVec(&state, sb_in->insns);
    return sb_out;
 }

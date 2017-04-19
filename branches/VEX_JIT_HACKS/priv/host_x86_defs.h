@@ -712,9 +712,11 @@ extern X86Instr* X86Instr_SseShuf   ( Int order, HReg src, HReg dst );
 extern X86Instr* X86Instr_EvCheck   ( X86AMode* amCounter,
                                       X86AMode* amFailAddr );
 extern X86Instr* X86Instr_ProfInc   ( void );
+extern X86Instr* X86Instr_IfThenElse(HInstrIfThenElse*);
 
 
 extern void ppX86Instr ( const X86Instr*, Bool );
+extern void ppX86CondCode(X86CondCode);
 
 /* Some functions that insulate the register allocator from details
    of the underlying instruction set. */

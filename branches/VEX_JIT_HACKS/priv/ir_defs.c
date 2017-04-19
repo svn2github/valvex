@@ -1610,13 +1610,19 @@ void ppIRIfThenElse_Hint(IRIfThenElse_Hint hint)
    }
 }
 
-void ppIRIfThenElse(const IRIfThenElse* ite, const IRTypeEnv* tyenv, UInt depth)
+void ppIRIfThenElseCondHint(const IRIfThenElse* ite)
 {
    vex_printf("if (");
    ppIRExpr(ite->cond);
    vex_printf(") [");
    ppIRIfThenElse_Hint(ite->hint);
-   vex_printf("] then {\n");
+   vex_printf("]");
+}
+
+void ppIRIfThenElse(const IRIfThenElse* ite, const IRTypeEnv* tyenv, UInt depth)
+{
+   ppIRIfThenElseCondHint(ite);
+   vex_printf(" then {\n");
    ppIRStmtVec(ite->then_leg, tyenv, depth + 1);
    print_depth(depth);
    vex_printf("} else {\n");

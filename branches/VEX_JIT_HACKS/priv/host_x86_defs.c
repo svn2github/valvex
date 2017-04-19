@@ -922,6 +922,13 @@ X86Instr* X86Instr_ProfInc ( void ) {
    i->tag      = Xin_ProfInc;
    return i;
 }
+X86Instr* X86Instr_IfThenElse(HInstrIfThenElse* hite)
+{
+   X86Instr* i            = LibVEX_Alloc_inline(sizeof(X86Instr));
+   i->tag                 = Xin_IfThenElse;
+   i->Xin.IfThenElse.hite = hite;
+   return i;
+}
 
 void ppX86Instr ( const X86Instr* i, Bool mode64 ) {
    vassert(mode64 == False);
@@ -1212,9 +1219,18 @@ void ppX86Instr ( const X86Instr* i, Bool mode64 ) {
          vex_printf("(profInc) addl $1,NotKnownYet; "
                     "adcl $0,NotKnownYet+4");
          return;
+      case Xin_IfThenElse:
+         vex_printf("if (!%s) then {...",
+                    showX86CondCode(i->Xin.IfThenElse.hite->ccOOL));
+         return;
       default:
          vpanic("ppX86Instr");
    }
+}
+
+void ppX86CondCode(X86CondCode condCode)
+{
+   vex_printf("%s", showX86CondCode(condCode));
 }
 
 /* --------- Helpers for register allocation. --------- */
