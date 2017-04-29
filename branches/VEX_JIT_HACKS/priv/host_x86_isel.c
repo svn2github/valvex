@@ -3927,6 +3927,8 @@ static void iselStmtVec(ISelEnv* env, IRStmtVec* stmts)
                                             ite->hint, &n_phis);
 
       X86CondCode   cc       = iselCondCode(env, ite->cond);
+      /* Note: do not insert any instructions which alter |cc| before it
+         is consumed by the corresponding branch. */
       HInstrIfThenElse* hite = newHInstrIfThenElse(cc, phi_nodes, n_phis);
       X86Instr* instr        = X86Instr_IfThenElse(hite);
       addInstr(env, instr);
