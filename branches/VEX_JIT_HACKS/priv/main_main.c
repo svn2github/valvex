@@ -1052,11 +1052,13 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
    }
 
    /* Register allocate. */
-   rcode = doRegisterAllocation ( vcode, rRegUniv,
-                                  isMove, getRegUsage, mapRegs, isIfThenElse,
-                                  genSpill, genReload, directReload, 
-                                  guest_sizeB,
-                                  ppInstr, ppCondCode, ppReg, mode64 );
+   RegAllocSettings settings = {
+      .univ = rRegUniv, .isMove = isMove, .getRegUsage = getRegUsage,
+      .mapRegs = mapRegs, .isIfThenElse = isIfThenElse, .genSpill = genSpill,
+      .genReload = genReload, .directReload = directReload,
+      .guest_sizeB = guest_sizeB, .ppInstr = ppInstr, .ppCondCode = ppCondCode,
+      .ppReg = ppReg, .mode64 = mode64};
+   rcode = doRegisterAllocation(vcode, &settings);
 
    vexAllocSanityCheck();
 

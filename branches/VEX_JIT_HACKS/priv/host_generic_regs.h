@@ -486,45 +486,58 @@ static inline Bool is_RetLoc_INVALID ( RetLoc rl ) {
 /*--- Reg alloc: TODO: move somewhere else              ---*/
 /*---------------------------------------------------------*/
 
+/* Settings for the register allocator. Immutable (do not change at all). */
+typedef
+   struct {
+      /* The real-register universe to use.  This contains facts about
+         real registers, one of which is the set of registers available
+         for allocation. */
+      const RRegUniverse* univ;
+
+      /* Return True iff the given insn is a reg-reg move, in which
+         case also return the src and dst regs. */
+      Bool (*isMove)(const HInstr*, HReg*, HReg*);
+
+      /* Get info about register usage in this insn. */
+      void (*getRegUsage)(HRegUsage*, const HInstr*, Bool);
+
+      /* Apply a reg-reg mapping to an insn. */
+      void (*mapRegs)(HRegRemap*, HInstr*, Bool);
+
+      /* Is this instruction actually HInstrIfThenElse? */
+      HInstrIfThenElse* (*isIfThenElse)(const HInstr*);
+
+      /* Return one, or, if we're unlucky, two insn(s) to spill/restore a
+         real reg to a spill slot byte offset. The two leading HInstr**
+         args are out parameters, through which the generated insns are
+         returned. Also (optionally) a 'directReload' function, which
+         attempts to replace a given instruction by one which reads
+         directly from a specified spill slot. May be NULL, in which
+         case the optimisation is not attempted. */
+      void    (*genSpill)( HInstr**, HInstr**, HReg, Int, Bool);
+      void    (*genReload)( HInstr**, HInstr**, HReg, Int, Bool);
+      HInstr* (*directReload)( HInstr*, HReg, Short);
+      UInt    guest_sizeB;
+
+      /* For debug printing only. */
+      void (*ppInstr)(const HInstr*, Bool);
+      void (*ppCondCode)(HCondCode);
+      void (*ppReg)(HReg);
+
+      /* 32/64bit mode */
+      Bool mode64;
+   }
+   RegAllocSettings;
+
+
 extern
 HInstrSB* doRegisterAllocation (
 
    /* Incoming virtual-registerised code. */ 
    HInstrSB* sb_in,
 
-   /* The real-register universe to use.  This contains facts about
-      real registers, one of which is the set of registers available
-      for allocation. */
-   const RRegUniverse* univ,
-
-   /* Return True iff the given insn is a reg-reg move, in which
-      case also return the src and dst regs. */
-   Bool (*isMove) (const HInstr*, HReg*, HReg*),
-
-   /* Get info about register usage in this insn. */
-   void (*getRegUsage) (HRegUsage*, const HInstr*, Bool),
-
-   /* Apply a reg-reg mapping to an insn. */
-   void (*mapRegs) (HRegRemap*, HInstr*, Bool),
-
-   /* Is this instruction actually HInstrIfThenElse? Returns pointer to
-      HInstrIfThenElse if yes, NULL otherwise. */
-   HInstrIfThenElse* (*isIfThenElse) (const HInstr*),
-
-   /* Return insn(s) to spill/restore a real reg to a spill slot
-      offset.  And optionally a function to do direct reloads. */
-   void    (*genSpill) (  HInstr**, HInstr**, HReg, Int, Bool ),
-   void    (*genReload) ( HInstr**, HInstr**, HReg, Int, Bool ),
-   HInstr* (*directReload) ( HInstr*, HReg, Short ),
-   Int     guest_sizeB,
-
-   /* For debug printing only. */
-   void (*ppInstr) ( const HInstr*, Bool ),
-   void (*ppCondCode)(HCondCode),
-   void (*ppReg) ( HReg ),
-
-   /* 32/64bit mode */
-   Bool mode64
+   /* Register allocator settings. */
+   const RegAllocSettings* settings
 );
 
 
