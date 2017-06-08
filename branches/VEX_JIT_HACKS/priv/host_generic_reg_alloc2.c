@@ -207,9 +207,9 @@ static void sanity_check_spill_offset ( VRegLR* vreg )
 
 /* Double the size of the real-reg live-range array, if needed. */
 __attribute__((noinline)) 
-static void ensureRRLRspace_SLOW ( RRegLR** info, Int* size, Int used )
+static void ensureRRLRspace_SLOW ( RRegLR** info, UInt* size, UInt used )
 {
-   Int     k;
+   UInt    k;
    RRegLR* arr2;
    if (0)
       vex_printf("ensureRRISpace: %d -> %d\n", *size, 2 * *size);
@@ -221,7 +221,7 @@ static void ensureRRLRspace_SLOW ( RRegLR** info, Int* size, Int used )
    *info = arr2;
 }
 inline
-static void ensureRRLRspace ( RRegLR** info, Int* size, Int used )
+static void ensureRRLRspace ( RRegLR** info, UInt* size, UInt used )
 {
    if (LIKELY(used < *size)) return;
    ensureRRLRspace_SLOW(info, size, used);
@@ -339,6 +339,21 @@ static void* local_memset ( void *destV, Int c, SizeT sz )
 }
 
 
+static inline void flush_rreg_lrs_la(
+    RRegLR** rreg_lrs_la, UInt *rreg_lrs_size, UInt *rreg_lrs_used,
+    HReg rreg, Int flush_la, Int flush_db, const HChar *debug_phase)
+{
+   ensureRRLRspace(rreg_lrs_la, rreg_lrs_size, *rreg_lrs_used);
+   if (0) {
+      vex_printf("%s (%d,%d)\n", debug_phase, flush_la, flush_db);
+   }
+
+   (*rreg_lrs_la)[*rreg_lrs_used].rreg        = rreg;
+   (*rreg_lrs_la)[*rreg_lrs_used].live_after  = toShort(flush_la);
+   (*rreg_lrs_la)[*rreg_lrs_used].dead_before = toShort(flush_db);
+   (*rreg_lrs_used)++;
+}
+
 /* A target-independent register allocator.  Requires various
    functions which it uses to deal abstractly with instructions and
    registers, since it cannot have any target-specific knowledge.
@@ -379,8 +394,8 @@ HInstrSB* doRegisterAllocation (
       location in the two arrays to consider. */
    RRegLR* rreg_lrs_la;
    RRegLR* rreg_lrs_db;
-   Int     rreg_lrs_size;
-   Int     rreg_lrs_used;
+   UInt    rreg_lrs_size;
+   UInt    rreg_lrs_used;
    Int     rreg_lrs_la_next;
    Int     rreg_lrs_db_next;
 
@@ -711,13 +726,9 @@ HInstrSB* doRegisterAllocation (
          if (flush) {
             vassert(flush_la != INVALID_INSTRNO);
             vassert(flush_db != INVALID_INSTRNO);
-            ensureRRLRspace(&rreg_lrs_la, &rreg_lrs_size, rreg_lrs_used);
-            if (0) 
-               vex_printf("FLUSH 1 (%d,%d)\n", flush_la, flush_db);
-            rreg_lrs_la[rreg_lrs_used].rreg        = settings->univ->regs[j];
-            rreg_lrs_la[rreg_lrs_used].live_after  = toShort(flush_la);
-            rreg_lrs_la[rreg_lrs_used].dead_before = toShort(flush_db);
-            rreg_lrs_used++;
+            flush_rreg_lrs_la(&rreg_lrs_la, &rreg_lrs_size, &rreg_lrs_used,
+                              settings->univ->regs[j], flush_la, flush_db,
+                              "FLUSH 1");
          }
 
       } /* iterate over rregs in the instr */
@@ -747,14 +758,9 @@ HInstrSB* doRegisterAllocation (
       if (rreg_live_after[j] == INVALID_INSTRNO)
          continue;
 
-      ensureRRLRspace(&rreg_lrs_la, &rreg_lrs_size, rreg_lrs_used);
-      if (0)
-         vex_printf("FLUSH 2 (%d,%d)\n", 
-                    rreg_live_after[j], rreg_dead_before[j]);
-      rreg_lrs_la[rreg_lrs_used].rreg        = settings->univ->regs[j];
-      rreg_lrs_la[rreg_lrs_used].live_after  = toShort(rreg_live_after[j]);
-      rreg_lrs_la[rreg_lrs_used].dead_before = toShort(rreg_dead_before[j]);
-      rreg_lrs_used++;
+      flush_rreg_lrs_la(&rreg_lrs_la, &rreg_lrs_size, &rreg_lrs_used,
+                        settings->univ->regs[j], rreg_live_after[j],
+                        rreg_dead_before[j], "FLUSH 2");
    }
 
    /* Compute summary hints for choosing real regs.  If a real reg is
