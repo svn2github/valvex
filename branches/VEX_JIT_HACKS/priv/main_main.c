@@ -926,6 +926,7 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
    // the output of the front end, and iropt never screws up the IR by
    // itself, unless it is being hacked on.  So remove this post-iropt
    // check in "production" use.
+   /* TODO-JIT: Remove sanity checking here and there. */
    sanityCheckIRSB( irsb, "after initial iropt", 
                     True/*must be flat*/, guest_word_type );
 
