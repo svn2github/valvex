@@ -354,36 +354,39 @@ static inline void flush_rreg_lrs_la(
    (*rreg_lrs_used)++;
 }
 
-/* A target-independent register allocator.  Requires various
-   functions which it uses to deal abstractly with instructions and
-   registers, since it cannot have any target-specific knowledge.
+/* Register allocator for a chunk of instructions in an HInstrVec.
 
-   Returns a new list of instructions, which, as a result of the
-   behaviour of mapRegs, will be in-place modifications of the
-   original instructions.
-
-   Requires that the incoming code has been generated using
-   vreg numbers 0, 1 .. n_vregs-1.  Appearance of a vreg outside
-   that range is a checked run-time error.
-
-   Takes an expandable array of pointers to unallocated insns.
-   Returns an expandable array of pointers to allocated insns.
+   Takes a chunk of unallocated insns present in HInstrVec, delimited
+   by 'ii_start' .. 'ii_start + ii_length' (exclusive).
+   
+   Emits the allocated insns into insns_out.
 */
-HInstrSB* doRegisterAllocation (
+static void regAlloc_HInstrVecChunk (
    /* Incoming virtual-registerised code. */ 
-   HInstrSB* sb_in,
+   HInstrVec* instrs_in,
+
+   UInt ii_start,
+   UInt ii_length,
 
    /* Register allocator settings. */
-   const RegAllocSettings* settings
+   const RegAllocSettings* settings,
+
+   UInt n_vregs,
+
+   /* Outgoing code with real registers. */
+   HInstrVec* instrs_out
 )
 {
 #  define N_SPILL64S  (LibVEX_N_SPILL_BYTES / 8)
+   STATIC_ASSERT((LibVEX_N_SPILL_BYTES % LibVEX_GUEST_STATE_ALIGN) == 0);
+   STATIC_ASSERT((N_SPILL64S % 2) == 0);
+
+   vassert(ii_start + ii_length <= instrs_in->insns_used);
 
    const Bool eq_spill_opt = True;
 
    /* Info on vregs and rregs.  Computed once and remains
       unchanged. */
-   Int     n_vregs;
    VRegLR* vreg_lrs; /* [0 .. n_vregs-1] */
 
    /* We keep two copies of the real-reg live range info, one sorted
@@ -402,7 +405,7 @@ HInstrSB* doRegisterAllocation (
    /* Info on register usage in the incoming instruction array.
       Computed once and remains unchanged, more or less; updated
       sometimes by the direct-reload optimisation. */
-   HRegUsage* reg_usage_arr; /* [0 .. instrs_in->insns_used-1] */
+   HRegUsage* reg_usage_arr; /* [0 .. ii_length - 1] */
 
    /* Used when constructing vreg_lrs (for allocating stack
       slots). */
@@ -425,22 +428,14 @@ HInstrSB* doRegisterAllocation (
       instr. */
    HRegRemap remap;
 
-   /* The output array of instructions. */
-   HInstrSB* instrs_out;
-   HInstrVec *instrs_in = sb_in->insns;
-
    /* Sanity checks are expensive.  They are only done periodically,
       not at each insn processed. */
    Bool do_sanity_check;
 
-   vassert(0 == (settings->guest_sizeB % LibVEX_GUEST_STATE_ALIGN));
-   vassert(0 == (LibVEX_N_SPILL_BYTES % LibVEX_GUEST_STATE_ALIGN));
-   vassert(0 == (N_SPILL64S % 2));
-
    /* The live range numbers are signed shorts, and so limiting the
       number of insns to 15000 comfortably guards against them
       overflowing 32k. */
-   vassert(instrs_in->insns_used <= 15000);
+   vassert(ii_length <= 15000);
 
 #  define INVALID_INSTRNO (-2)
 
@@ -452,7 +447,7 @@ HInstrSB* doRegisterAllocation (
            settings->ppInstr(_tmp, settings->mode64); \
            vex_printf("\n\n");                        \
         }                                             \
-        addHInstr(instrs_out->insns, _tmp);           \
+        addHInstr(instrs_out, _tmp);                  \
       } while (0)
 
 #   define PRINT_STATE						   \
@@ -484,15 +479,11 @@ HInstrSB* doRegisterAllocation (
       } while (0)
 
 
-   /* --------- Stage 0: set up output array --------- */
-   /* --------- and allocate/initialise running state. --------- */
-
-   instrs_out = newHInstrSB();
+   /* --------- Stage 0: allocate/initialise running state. --------- */
 
    /* ... and initialise running state. */
    /* n_rregs is no more than a short name for n_available_real_regs. */
    n_rregs = settings->univ->allocable;
-   n_vregs = sb_in->n_vregs;
 
    /* If this is not so, vreg_state entries will overflow. */
    vassert(n_vregs < 32767);
@@ -540,8 +531,7 @@ HInstrSB* doRegisterAllocation (
 
    /* An array to hold the reg-usage info for the incoming
       instructions. */
-   reg_usage_arr
-      = LibVEX_Alloc_inline(sizeof(HRegUsage) * instrs_in->insns_used-1);
+   reg_usage_arr = LibVEX_Alloc_inline(sizeof(HRegUsage) * ii_length - 1);
 
    /* ------ end of SET UP TO COMPUTE VREG LIVE RANGES ------ */
 
@@ -571,14 +561,14 @@ HInstrSB* doRegisterAllocation (
 
    /* ------ start of ITERATE OVER INSNS ------ */
 
-   for (Int ii = 0; ii < instrs_in->insns_used; ii++) {
+   for (UInt ii = 0; ii < ii_length; ii++) {
+      const HInstr* instr_in = instrs_in->insns[ii_start + ii];
 
-      settings->getRegUsage(&reg_usage_arr[ii], instrs_in->insns[ii],
-                            settings->mode64);
+      settings->getRegUsage(&reg_usage_arr[ii], instr_in, settings->mode64);
 
       if (0) {
          vex_printf("\n%d  stage1: ", ii);
-         settings->ppInstr(instrs_in->insns[ii], settings->mode64);
+         settings->ppInstr(instr_in, settings->mode64);
          vex_printf("\n");
          ppHRegUsage(settings->univ, &reg_usage_arr[ii]);
       }
@@ -594,7 +584,7 @@ HInstrSB* doRegisterAllocation (
          Int k = hregIndex(vreg);
          if (k < 0 || k >= n_vregs) {
             vex_printf("\n");
-            settings->ppInstr(instrs_in->insns[ii], settings->mode64);
+            settings->ppInstr(instr_in, settings->mode64);
             vex_printf("\n");
             vex_printf("vreg %d, n_vregs %d\n", k, n_vregs);
             vpanic("doRegisterAllocation: out-of-range vreg");
@@ -702,7 +692,7 @@ HInstrSB* doRegisterAllocation (
                settings->ppReg(settings->univ->regs[j]);
                vex_printf("\n");
                vex_printf("\nOFFENDING instr = ");
-               settings->ppInstr(instrs_in->insns[ii], settings->mode64);
+               settings->ppInstr(instr_in, settings->mode64);
                vex_printf("\n");
                vpanic("doRegisterAllocation: "
                       "first event for rreg is Read");
@@ -715,7 +705,7 @@ HInstrSB* doRegisterAllocation (
                settings->ppReg(settings->univ->regs[j]);
                vex_printf("\n");
                vex_printf("\nOFFENDING instr = ");
-               settings->ppInstr(instrs_in->insns[ii], settings->mode64);
+               settings->ppInstr(instr_in, settings->mode64);
                vex_printf("\n");
                vpanic("doRegisterAllocation: "
                       "first event for rreg is Modify");
@@ -957,12 +947,13 @@ HInstrSB* doRegisterAllocation (
 
    /* ------ BEGIN: Process each insn in turn. ------ */
 
-   for (Int ii = 0; ii < instrs_in->insns_used; ii++) {
+   for (UInt ii = 0; ii < ii_length; ii++) {
+      HInstr* instr_in = instrs_in->insns[ii_start + ii];
 
       if (DEBUG_REGALLOC) {
          vex_printf("\n====----====---- Insn %d ----====----====\n", ii);
          vex_printf("---- ");
-         settings->ppInstr(instrs_in->insns[ii], settings->mode64);
+         settings->ppInstr(instr_in, settings->mode64);
          vex_printf("\n\nInitial state:\n");
          PRINT_STATE;
          vex_printf("\n");
@@ -976,7 +967,7 @@ HInstrSB* doRegisterAllocation (
       do_sanity_check
          = toBool(
               False /* Set to True for sanity checking of all insns. */
-              || ii == instrs_in->insns_used-1
+              || ii == ii_length - 1
               || (ii > 0 && (ii % 17) == 0)
            );
 
@@ -1077,7 +1068,7 @@ HInstrSB* doRegisterAllocation (
          the dst to the src's rreg, and that's all. */
       HReg vregS = INVALID_HREG;
       HReg vregD = INVALID_HREG;
-      if (settings->isMove(instrs_in->insns[ii], &vregS, &vregD)) {
+      if (settings->isMove(instr_in, &vregS, &vregD)) {
          if (!hregIsVirtual(vregS)) goto cannot_coalesce;
          if (!hregIsVirtual(vregD)) goto cannot_coalesce;
          /* Check that *isMove is not telling us a bunch of lies ... */
@@ -1244,10 +1235,9 @@ HInstrSB* doRegisterAllocation (
          can convert the instruction into one that reads directly from
          the spill slot.  This is clearly only possible for x86 and
          amd64 targets, since ppc and arm are load-store
-         architectures.  If successful, replace instrs_in->arr[ii]
-         with this new instruction, and recompute its reg usage, so
-         that the change is invisible to the standard-case handling
-         that follows. */
+         architectures.  If successful, replace instrs_in->insns[ii_start + ii]
+         with this new instruction, and recompute its reg usage, so that
+         the change is invisible to the standard-case handling that follows. */
       
       if (settings->directReload != NULL && reg_usage_arr[ii].n_vRegs <= 2) {
          Bool  debug_direct_reload = False;
@@ -1283,17 +1273,17 @@ HInstrSB* doRegisterAllocation (
                vassert(! sameHReg(reg_usage_arr[ii].vRegs[0],
                                   reg_usage_arr[ii].vRegs[1]));
 
-            reloaded = settings->directReload(instrs_in->insns[ii], cand,
-                                              spilloff);
+            reloaded = settings->directReload(instr_in, cand, spilloff);
             if (debug_direct_reload && !reloaded) {
                vex_printf("[%3d] ", spilloff); ppHReg(cand); vex_printf(" "); 
-               settings->ppInstr(instrs_in->insns[ii], settings->mode64); 
+               settings->ppInstr(instr_in, settings->mode64); 
             }
             if (reloaded) {
                /* Update info about the insn, so it looks as if it had
                   been in this form all along. */
-               instrs_in->insns[ii] = reloaded;
-               settings->getRegUsage(&reg_usage_arr[ii], instrs_in->insns[ii],
+               instr_in = reloaded;
+               instrs_in->insns[ii_start + ii] = reloaded;
+               settings->getRegUsage(&reg_usage_arr[ii], instr_in,
                                      settings->mode64);
                if (debug_direct_reload && !reloaded) {
                   vex_printf("  -->  ");
@@ -1433,7 +1423,7 @@ HInstrSB* doRegisterAllocation (
             of consequent reloads required. */
          Int spillee
             = findMostDistantlyMentionedVReg ( 
-                 reg_usage_arr, ii+1, instrs_in->insns_used, rreg_state, n_rregs );
+                 reg_usage_arr, ii+1, ii_length, rreg_state, n_rregs );
 
          if (spillee == -1) {
             /* Hmmmmm.  There don't appear to be any spill candidates.
@@ -1525,9 +1515,9 @@ HInstrSB* doRegisterAllocation (
         and emit that.
       */
 
-      /* NOTE, DESTRUCTIVELY MODIFIES instrs_in->insns[ii]. */
-      settings->mapRegs(&remap, instrs_in->insns[ii], settings->mode64);
-      EMIT_INSTR(instrs_in->insns[ii]);
+      /* NOTE, DESTRUCTIVELY MODIFIES instrs_in->insns[ii_start + ii]. */
+      settings->mapRegs(&remap, instr_in, settings->mode64);
+      EMIT_INSTR(instr_in);
 
       if (DEBUG_REGALLOC) {
          vex_printf("After dealing with current insn:\n");
@@ -1580,14 +1570,68 @@ HInstrSB* doRegisterAllocation (
    vassert(rreg_lrs_la_next == rreg_lrs_used);
    vassert(rreg_lrs_db_next == rreg_lrs_used);
 
-   return instrs_out;
-
 #  undef INVALID_INSTRNO
 #  undef EMIT_INSTR
 #  undef PRINT_STATE
 }
 
+static void doRegisterAllocation_HInstrVec(
+   HInstrVec* insns_in, UInt n_vregs, const RegAllocSettings* settings,
+   HInstrVec* insns_out)
+{
+   UInt ii_start = 0, ii = 0;
+   for ( ; ii < insns_in->insns_used; ii++) {
+      HInstrIfThenElse* hite = settings->isIfThenElse(insns_in->insns[ii]);
 
+      if (UNLIKELY(hite != NULL)) {
+         vpanic("HInstrIfThenElse not supported yet in reg alloc");
+         // Pass the previous insn chunk to regAlloc_HInstrVecChunk
+         // Save the snapshot of the register allocator state
+         // Work on fallThrough
+         // Work on outOfLine
+         // Merge the states and emit HInstrIfThenElse
+      }
+   }
+
+   if (ii - ii_start > 0) {
+      regAlloc_HInstrVecChunk(insns_in, ii_start, ii - ii_start, settings,
+                              n_vregs, insns_out);
+   }
+}
+
+/* A target-independent register allocator.  Requires various
+   functions which it uses to deal abstractly with instructions and
+   registers, since it cannot have any target-specific knowledge.
+   They are all stashed in 'settings'.
+
+   Returns a new list of instructions, which, as a result of the
+   behaviour of mapRegs, will be in-place modifications of the
+   original instructions.
+
+   Requires that the incoming code has been generated using
+   vreg numbers 0, 1 .. n_vregs-1.  Appearance of a vreg outside
+   that range is a checked run-time error.
+
+   Takes an HInstrSB with unallocated insns.
+   Returns an HInstrSB with allocated insns.
+*/
+HInstrSB* doRegisterAllocation(
+   /* Incoming virtual-registerised code. */ 
+   HInstrSB* sb_in,
+
+   /* Register allocator settings. */
+   const RegAllocSettings* settings
+)
+{
+   vassert((settings->guest_sizeB % LibVEX_GUEST_STATE_ALIGN) == 0);
+
+   HInstrSB* sb_out = newHInstrSB();
+
+   doRegisterAllocation_HInstrVec(sb_in->insns, sb_in->n_vregs, settings,
+                                  sb_out->insns);
+
+   return sb_out;
+}
 
 /*---------------------------------------------------------------*/
 /*---                                       host_reg_alloc2.c ---*/
