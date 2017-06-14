@@ -418,7 +418,7 @@ HInstrSB* doRegisterAllocation (
 
    /* .. and the redundant backward map */
    /* Each value is 0 .. n_rregs-1 or is INVALID_RREG_NO.
-      This inplies n_rregs must be <= 32768. */
+      This implies n_rregs must be <= 32768. */
    Short*     vreg_state;  /* [0 .. n_vregs-1] */
 
    /* The vreg -> rreg map constructed and then applied to each
@@ -541,7 +541,7 @@ HInstrSB* doRegisterAllocation (
    /* An array to hold the reg-usage info for the incoming
       instructions. */
    reg_usage_arr
-      = LibVEX_Alloc_inline(sizeof(HRegUsage) * instrs_in->insns_used-1);
+      = LibVEX_Alloc_inline(sizeof(HRegUsage) * instrs_in->insns_used);
 
    /* ------ end of SET UP TO COMPUTE VREG LIVE RANGES ------ */
 
@@ -671,7 +671,7 @@ HInstrSB* doRegisterAllocation (
 
       /* for each allocator-available real reg mentioned in the insn ... */
       /* Note.  We are allocating only over the real regs available to
-         the allocator.  Others, eg the stack or baseblock pointers,
+         the allocator.  Others, eg the stack or guest state pointers,
          are unavailable to allocation and so we never visit them.
          Hence the iteration is cut off at n_rregs-1, since n_rregs ==
          univ->allocable. */
@@ -916,8 +916,8 @@ HInstrSB* doRegisterAllocation (
 
       } /* switch (vreg_lrs[j].reg_class) */
 
-      /* This reflects LibVEX's hard-wired knowledge of the baseBlock
-         layout: the guest state, then two equal sized areas following
+      /* This reflects LibVEX's hard-wired knowledge of the guest state
+         layout: the guest state itself, then two equal sized areas following
          it for two sets of shadow state, and then the spill area. */
       vreg_lrs[j].spill_offset = toShort(settings->guest_sizeB * 3 + ss_no * 8);
 
