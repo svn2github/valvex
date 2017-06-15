@@ -166,23 +166,44 @@ typedef
    RegAllocState;
 
 typedef
-   struct _RegAllocChunk {
+   struct _RegAllocVec
+   RegAllocVec;
+
+/* A union of either RegAllocState or If-Then-Else control diamond. */
+typedef
+   struct {
       enum {
-         Chunk,
-         IfThenElse
+         Chunk,     /* Processing a chunk of instructions. */
+         IfThenElse /* Processing an HInstrIfThenElse. */
       } tag;
       union {
+         /* A register allocator state is created based on the previous state
+            and information about instructions in the current chunk of HInstr's
+            from [ii_start .. ii_start + ii_length - 1].
+            The state is accrued by processing all instructions in this chunk.*/
          struct {
-            RegAllocState** states;
-            UInt            n_states;
-         } States;
+            RegAllocState* state;
+            HInstrVec*     insns_in;
+            UInt           ii_start;
+            UInt           ii_length;
+         };
+         /* Alternatively, we've just arrived upon HInstrIfThenElse. Process
+            fallThrough and outOfLine legs; then merge states. */
          struct {
-            struct _RegAllocChunk* fallThrough;
-            struct _RegAllocChunk* outOfLine;
-         } IfThenElse;
+            RegAllocVec*      fallThrough;
+            RegAllocVec*      outOfLine;
+            HInstrIfThenElse* hite;
+         };
       };
    }
    RegAllocChunk;
+
+/* An expandable vector of RegAllocChunk elements. */
+struct _RegAllocVec {
+   RegAllocChunk** chunks;
+   UInt            chunks_used;
+   UInt            chunks_size;
+};
 
 /* The allocator also maintains a redundant array of indexes
    (vreg_state) from vreg numbers back to entries in rreg_state.  It
@@ -272,6 +293,33 @@ static RegAllocState* create_RegAllocState(const RegAllocSettings* settings,
       state->vreg_state[j] = INVALID_RREG_NO;
 
    return state;
+}
+
+static RegAllocChunk* create_RegAllocChunk(RegAllocState* state,
+   HInstrVec* insns_in, UInt ii_start, UInt ii_length)
+{
+   vassert(ii_start + ii_length <= insns_in->insns_used);
+
+   RegAllocChunk* chunk = LibVEX_Alloc_inline(sizeof(RegAllocChunk));
+
+   chunk->tag = Chunk;
+   chunk->state = state;
+   chunk->insns_in = insns_in;
+   chunk->ii_start = ii_start;
+   chunk->ii_length = ii_length;
+
+   return chunk;
+}
+
+static RegAllocVec* create_RegAllocVec(void)
+{
+   RegAllocVec* vec = LibVEX_Alloc_inline(sizeof(RegAllocVec));
+
+   vec->chunks_used = 0;
+   vec->chunks_size = 4;
+   vec->chunks = LibVEX_Alloc_inline(vec->chunks_size * sizeof(RegAllocChunk *));
+
+   return vec;
 }
 
 /* Search forward from some given point in the incoming instruction
@@ -496,32 +544,31 @@ static inline void add_into_rreg_lrs_la(RegAllocState* state,
    Takes an expandable array of pointers to unallocated insns.
    Returns an expandable array of pointers to allocated insns.
 */
-HInstrSB* doRegisterAllocation (
+static void doRegisterAllocation_Chunk(
    /* Incoming virtual-registerised code. */ 
-   HInstrSB* sb_in,
+   RegAllocChunk* chunk,
 
    /* Register allocator settings. */
-   const RegAllocSettings* settings
+   const RegAllocSettings* settings,
+
+   HInstrVec* insns_out
 )
 {
    const Bool eq_spill_opt = True;
 
-   /* The output array of instructions. */
-   HInstrSB* instrs_out;
-   HInstrVec *instrs_in = sb_in->insns;
+   vassert(chunk->tag == Chunk);
+   RegAllocState* state = chunk->state;
+   HInstrVec *instrs_in = chunk->insns_in;
 
    /* Info on register usage in the incoming instruction vector.
       Computed once and remains unchanged, more or less; updated
       sometimes by the direct-reload optimisation. */
-   HRegUsage* reg_usage_arr; /* [0 .. instrs_in->insns_used-1] */
-   reg_usage_arr
-      = LibVEX_Alloc_inline(sizeof(HRegUsage) * instrs_in->insns_used);
+   HRegUsage* reg_usage_arr; /* [0 .. ii_length-1] */
+   reg_usage_arr = LibVEX_Alloc_inline(sizeof(HRegUsage) * chunk->ii_length);
 
    /* Sanity checks are expensive.  They are only done periodically,
       not at each insn processed. */
    Bool do_sanity_check;
-
-   vassert(0 == (settings->guest_sizeB % LibVEX_GUEST_STATE_ALIGN));
 
    /* The live range numbers are signed shorts, and so limiting the
       number of insns to 15000 comfortably guards against them
@@ -536,7 +583,7 @@ HInstrSB* doRegisterAllocation (
            settings->ppInstr(_tmp, settings->mode64); \
            vex_printf("\n\n");                        \
         }                                             \
-        addHInstr(instrs_out->insns, _tmp);           \
+        addHInstr(insns_out, _tmp);                   \
       } while (0)
 
 #   define PRINT_STATE                                                    \
@@ -565,13 +612,6 @@ HInstrSB* doRegisterAllocation (
          }                                                                \
          vex_printf("\n");                                                \
       } while (0)
-
-
-   /* --------- Stage 0: set up output array --------- */
-
-   instrs_out = newHInstrSB();
-
-   RegAllocState* state = create_RegAllocState(settings, sb_in->n_vregs);
 
    /* --------- Stage 1: compute vreg live ranges. --------- */
    /* --------- Stage 2: compute rreg live ranges. --------- */
@@ -1597,14 +1637,65 @@ HInstrSB* doRegisterAllocation (
    vassert(state->rreg_lrs_la_next == state->rreg_lrs_used);
    vassert(state->rreg_lrs_db_next == state->rreg_lrs_used);
 
-   return instrs_out;
-
-#  undef INVALID_INSTRNO
 #  undef EMIT_INSTR
 #  undef PRINT_STATE
 }
 
+/* Does register allocation for one HInstrVec which corresponds to
+   a RegAllocVec. */
+static void doRegisterAllocation_RegAllocVec(
+   HInstrVec* insns_in,
+   RegAllocState* state,
+   RegAllocVec* regAllocVec,
+   const RegAllocSettings* settings,
+   HInstrVec* insns_out)
+{
+   /* TODO-JIT: Scan for a contiguous chunk of instructions etc. */
 
+
+   RegAllocChunk* chunk = create_RegAllocChunk(state, insns_in, 0,
+                                               insns_in->insns_used);
+   doRegisterAllocation_Chunk(chunk, settings, insns_out);
+}
+
+/* A target-independent register allocator.  Requires various
+   functions which it uses to deal abstractly with instructions and
+   registers, since it cannot have any target-specific knowledge.
+   These are stashed in |settings|.
+
+   Returns a new list of instructions, which, as a result of the
+   behaviour of mapRegs, will be in-place modifications of the
+   original instructions.
+
+   Requires that the incoming code has been generated using
+   vreg numbers 0, 1 .. n_vregs-1.  Appearance of a vreg outside
+   that range is a checked run-time error.
+
+   Takes an HInstrSB of unallocated insns.
+   Returns an HInstrSB of allocated insns.
+*/
+HInstrSB* doRegisterAllocation(
+   /* Incoming virtual-registerised code. */ 
+   HInstrSB* sb_in,
+
+   /* Register allocator settings. */
+   const RegAllocSettings* settings
+)
+{
+   vassert((settings->guest_sizeB % LibVEX_GUEST_STATE_ALIGN) == 0);
+
+   RegAllocState* state = create_RegAllocState(settings, sb_in->n_vregs);
+
+   /* The output array of instructions. */
+   HInstrSB* sb_out = newHInstrSB();
+   sb_out->n_vregs = sb_in->n_vregs;
+
+   RegAllocVec* regAllocVec = create_RegAllocVec();
+   doRegisterAllocation_RegAllocVec(sb_in->insns, state, regAllocVec, settings,
+                                    sb_out->insns);
+
+   return sb_out;
+}
 
 /*---------------------------------------------------------------*/
 /*---                                       host_reg_alloc2.c ---*/
